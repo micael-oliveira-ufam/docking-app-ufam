@@ -1,4 +1,4 @@
-# 🧬 Dock-Easy-UFAM (Ferramenta automatizada de docking molecular com AutoDock Vina v.1.2.7)
+# 🧬 DockEasy-UFAM (Ferramenta automatizada de docking molecular com AutoDock Vina v.1.2.7)
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Framework-FF4B4B)
