@@ -109,6 +109,7 @@ if 'redocking_mode' not in st.session_state: st.session_state.redocking_mode = F
 if 'extracted_lig_pdb' not in st.session_state: st.session_state.extracted_lig_pdb = ""
 if 'vs_mode' not in st.session_state: st.session_state.vs_mode = False
 if 'vs_results_dir' not in st.session_state: st.session_state.vs_results_dir = ""
+if 'vina_log' not in st.session_state: st.session_state.vina_log = "" # NOVA MEMÓRIA PARA O LOG
 
 # Abas
 tab_install, tab_receptor, tab_ligante, tab_gridbox, tab_vina, tab_executar, tab_visualizar, tab_referencias = st.tabs([
@@ -469,7 +470,7 @@ with tab_gridbox:
         sy = c_y.number_input("Size H", key='sy', step=0.1, value=st.session_state.sy)
         sz = c_z.number_input("Size D", key='sz', step=0.1, value=st.session_state.sz)
 
-        # SUBSTITUIÇÃO: Botão para Checkbox (Evita que o grid suma ao clicar fora)
+        # Usando checkbox para a visualização não sumir ao recarregar a tela!
         if st.checkbox("Visualizar Caixa 3D (Manter ativado)"):
             if os.path.exists(st.session_state.rec_pdb_final):
                 with open(st.session_state.rec_pdb_final, 'r') as f:
@@ -497,13 +498,10 @@ with tab_vina:
         vina_config_name = st.text_input("Salvar job como:", value="config.txt")
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
-        
-        # DETECÇÃO AUTOMÁTICA DE CPU (Oculta para o usuário, mas processada nos bastidores)
         max_cpus = multiprocessing.cpu_count()
         st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
-        # Incluímos a variável cpu no arquivo de config gerado pro Vina
         if st.session_state.vs_mode:
             config_content = f"receptor = {vina_receptor}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {max_cpus}\n"
         else:
@@ -557,9 +555,8 @@ with tab_executar:
                             
                             progress_bar.progress(int((rep / 3.0) * 100))
                             
-                        st.success(f"🎉 Triagem Virtual em Triplicata concluída! Os resultados foram separados nas pastas `rep1`, `rep2` e `rep3` dentro de `{output_dir_input}/`")
-                        with st.expander("📝 Visualizar Log Bruto do Batch (AutoDock Vina)"):
-                            st.text_area("Log do Vina:", value=log_outputs, height=400)
+                        st.session_state.vina_log = log_outputs # Salva o log na memória
+                        st.success(f"🎉 Triagem Virtual em Triplicata concluída! Resultados em `{output_dir_input}/`")
                 except Exception as e: st.error(f"Erro do sistema: {e}")
 
     else:
@@ -590,11 +587,17 @@ with tab_executar:
                             
                             progress_bar.progress(int((rep / 3.0) * 100))
                         
-                        st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
+                        st.session_state.vina_log = log_outputs # Salva o log na memória
                         st.session_state.single_result_base = output_pdbqt_base
-                        with st.expander("📝 Visualizar Log de Execução (AutoDock Vina)"):
-                            st.text_area("Log Bruto do Terminal:", value=log_outputs, height=300)
+                        st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
                 except Exception as e: st.error(f"Erro: {e}")
+
+    # --- OPÇÃO PERMANENTE DE VISUALIZAÇÃO DE LOG ---
+    if st.session_state.vina_log:
+        st.divider()
+        mostrar_log = st.checkbox("Exibir Log de Execução do Vina (Terminal)")
+        if mostrar_log:
+            st.text_area("Saída Bruta do Algoritmo Termodinâmico:", value=st.session_state.vina_log, height=400)
 
 # ==========================================
 # ABA 7: Análise Químico-Estrutural
