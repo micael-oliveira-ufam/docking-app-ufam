@@ -8,7 +8,6 @@ import glob
 from datetime import datetime
 import numpy as np
 import multiprocessing
-import concurrent.futures
 
 # Tenta importar as bibliotecas principais
 try:
@@ -109,6 +108,7 @@ if 'redocking_mode' not in st.session_state: st.session_state.redocking_mode = F
 if 'extracted_lig_pdb' not in st.session_state: st.session_state.extracted_lig_pdb = ""
 if 'vs_mode' not in st.session_state: st.session_state.vs_mode = False
 if 'vs_results_dir' not in st.session_state: st.session_state.vs_results_dir = ""
+if 'vina_log_output' not in st.session_state: st.session_state.vina_log_output = "" 
 
 # Abas
 tab_install, tab_receptor, tab_ligante, tab_gridbox, tab_vina, tab_executar, tab_visualizar, tab_referencias = st.tabs([
@@ -213,10 +213,10 @@ with tab_ligante:
     with st.expander("📚 Fundamentos: Minimização e Triagem Virtual (Virtual Screening)", expanded=False):
         st.markdown("""
         ### Otimização Tridimensional Rápida (RDKit)
-        A geração 3D e o relaxamento do campo de força (MMFF94) agora são executados via `RDKit (ETKDG)`, conferindo otimização em frações de segundo para nuvem.
+        A geração 3D e o relaxamento do campo de força (MMFF94) da molécula são executados via `RDKit (ETKDG)`.
         
-        ### Triagem Virtual Paralelizada (Virtual Screening)
-        O algoritmo HTVS processa os arquivos enviados utilizando múltiplos núcleos (Multiprocessing), dividindo a conversão de `SDF/MOL2` para `PDBQT` acelerando o fluxo imensamente.
+        ### Triagem Virtual (Virtual Screening)
+        O algoritmo HTVS processa arquivos enviados de forma sequencial (uma molécula por vez), dividindo a conversão de `SDF/MOL2` para `PDBQT` garantindo estabilidade do sistema e evitando falhas na nuvem.
         """)
 
     modo_preparacao = st.radio("Selecione a Estratégia de Processamento:", [
@@ -335,13 +335,13 @@ with tab_ligante:
     else:
         st.session_state.redocking_mode = False
         st.session_state.vs_mode = True
-        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) - Paralelizado")
-        st.write("Faça o upload de múltiplos arquivos individuais OU de um único arquivo contendo várias moléculas (ex: biblioteca.sdf). As moléculas corrompidas serão puladas automaticamente.")
+        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) Sequencial")
+        st.write("Faça o upload de múltiplos arquivos individuais OU de um único arquivo contendo várias moléculas (ex: biblioteca.sdf).")
         
         uploaded_files = st.file_uploader("Arquivos de Biblioteca de Fármacos", type=['sdf', 'mol2', 'pdb'], accept_multiple_files=True)
         
         if uploaded_files:
-            if st.button("Processar Lote (Multi-Core)", type="primary"):
+            if st.button("Processar Lote e Converter para PDBQT", type="primary"):
                 os.makedirs("Ligantes_temp", exist_ok=True)
                 os.makedirs("Ligantes", exist_ok=True)
                 
@@ -355,48 +355,46 @@ with tab_ligante:
                         f.write(uf.getbuffer())
                     temp_paths.append(t_path)
                 
-                def process_single_file(t_path):
-                    sucesso, falha = 0, 0
+                total_sucesso = 0
+                total_falha = 0
+                
+                # Barra de progresso para a triagem em lote
+                progress_text = "Iniciando processamento sequencial..."
+                my_bar = st.progress(0, text=progress_text)
+                
+                for idx, t_path in enumerate(temp_paths):
                     base_name = os.path.splitext(os.path.basename(t_path))[0]
                     out_mol2_prefix = f"Ligantes_temp/{base_name}_.mol2"
                     
+                    # Passo 1: Separar e gerar estrutura 3D ignorando erros
                     cmd_3d = ["obabel", t_path, "-omol2", "-O", out_mol2_prefix, "-m", "--gen3d", "-e"]
                     res_3d = subprocess.run(cmd_3d, capture_output=True, text=True)
                     
                     log = res_3d.stderr + " " + res_3d.stdout
                     m_conv = re.search(r'(\d+)\s+molecules?\s+converted', log, re.IGNORECASE)
                     m_err = re.search(r'(\d+)\s+errors?', log, re.IGNORECASE)
-                    if m_conv: sucesso += int(m_conv.group(1))
-                    if m_err: falha += int(m_err.group(1))
+                    if m_conv: total_sucesso += int(m_conv.group(1))
+                    if m_err: total_falha += int(m_err.group(1))
                         
+                    # Passo 2: Converter as saídas para PDBQT
                     for m2 in glob.glob(f"Ligantes_temp/{base_name}_*.mol2"):
                         base_m2 = os.path.basename(m2).replace(".mol2", "")
                         final_pdbqt = f"Ligantes/{base_m2}.pdbqt"
                         subprocess.run(["obabel", "-imol2", m2, "-opdbqt", "-O", final_pdbqt, "-p", "7.4", "--partialcharge", "gasteiger"])
-                        
-                    return sucesso, falha
-
-                total_sucesso = 0
-                total_falha = 0
-                nucleos_disponiveis = multiprocessing.cpu_count()
+                    
+                    percentual = int(((idx + 1) / len(temp_paths)) * 100)
+                    my_bar.progress(percentual, text=f"Processado arquivo {idx+1} de {len(temp_paths)}...")
                 
-                with st.spinner(f"Ativando paralelismo ({nucleos_disponiveis} núcleos). Particionando e convertendo..."):
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=nucleos_disponiveis) as executor:
-                        resultados = executor.map(process_single_file, temp_paths)
-                        
-                        for suc, fal in resultados:
-                            total_sucesso += suc
-                            total_falha += fal
-                    
-                    qtd_gerados = len(glob.glob("Ligantes/*.pdbqt"))
-                    
-                    if qtd_gerados > 0:
-                        st.success(f"🎉 Triagem Virtual preparada! Foram separadas e convertidas {qtd_gerados} moléculas para `.pdbqt`.")
-                        if total_falha > 0:
-                            st.warning(f"⚠️ Atenção: {total_falha} molécula(s) descartadas devido a erros químicos ou topologia inválida.")
-                        st.session_state.lig_final = "Múltiplos Ligantes (Modo Lote Ativado)"
-                    else:
-                        st.error("Nenhuma molécula estruturalmente válida pôde ser extraída. Verifique os arquivos.")
+                my_bar.empty() # Esconde a barra quando terminar
+                qtd_gerados = len(glob.glob("Ligantes/*.pdbqt"))
+                
+                if qtd_gerados > 0:
+                    st.success(f"🎉 Triagem Virtual preparada! Foram separadas e convertidas {qtd_gerados} moléculas para `.pdbqt`.")
+                    if total_falha > 0:
+                        st.warning(f"⚠️ Atenção: {total_falha} molécula(s) descartadas devido a erros químicos ou topologia inválida.")
+                    st.session_state.lig_final = "Múltiplos Ligantes (Modo Lote Ativado)"
+                else:
+                    st.error("Nenhuma molécula estruturalmente válida pôde ser extraída. Verifique os arquivos.")
 
 # ==========================================
 # ABA 4: Grid Box (LaBOX / Biopython)
@@ -423,7 +421,8 @@ with tab_gridbox:
                     try:
                         with st.spinner("Mapeando vizinhança topológica..."):
                             if not os.path.exists("LaBOX.py"):
-                                requests.get("https://raw.githubusercontent.com/RyanZR/LaBOX/main/LaBOX.py")
+                                r_labox = requests.get("https://raw.githubusercontent.com/RyanZR/LaBOX/main/LaBOX.py")
+                                with open("LaBOX.py", "w") as f: f.write(r_labox.text)
                             res_labox = subprocess.run([sys.executable, "LaBOX.py", "-l", box_input_pdb, "-c"], capture_output=True, text=True)
                             
                             if res_labox.returncode == 0:
@@ -434,30 +433,36 @@ with tab_gridbox:
                                     st.session_state.cx, st.session_state.cy, st.session_state.cz = map(float, match_center.groups())
                                     st.session_state.sx, st.session_state.sy, st.session_state.sz = map(float, match_size.groups())
                                     st.rerun() 
+                            else:
+                                st.error("Erro interno no LaBOX.")
                     except Exception as e: st.error(f"Erro: {e}")
 
     else:
         with col_box1:
             box_input_pdb_blind = st.text_input("Arquivo PDB do Receptor Inteiro:", value=st.session_state.rec_pdb_final)
-            if st.button("Calcular Centro de Massa e Bounding Box (Biopython)"):
+            if st.button("Calcular Bounding Box Global (LaBOX)"):
                 if not os.path.exists(box_input_pdb_blind):
                     st.error("Erro: Arquivo PDB não encontrado.")
                 else:
                     try:
-                        with st.spinner("Analisando limites estruturais..."):
-                            parser = PDBParser(QUIET=True)
-                            structure = parser.get_structure('receptor', box_input_pdb_blind)
-                            center = structure.center_of_mass()
-                            st.session_state.cx, st.session_state.cy, st.session_state.cz = round(center[0], 3), round(center[1], 3), round(center[2], 3)
+                        with st.spinner("Mapeando limites globais com LaBOX..."):
+                            if not os.path.exists("LaBOX.py"):
+                                r_labox = requests.get("https://raw.githubusercontent.com/RyanZR/LaBOX/main/LaBOX.py")
+                                with open("LaBOX.py", "w") as f: f.write(r_labox.text)
                             
-                            coords = [atom.coord for atom in structure.get_atoms()]
-                            min_x, max_x = min(c[0] for c in coords), max(c[0] for c in coords)
-                            min_y, max_y = min(c[1] for c in coords), max(c[1] for c in coords)
-                            min_z, max_z = min(c[2] for c in coords), max(c[2] for c in coords)
+                            res_labox = subprocess.run([sys.executable, "LaBOX.py", "-l", box_input_pdb_blind, "-c"], capture_output=True, text=True)
                             
-                            st.session_state.sx, st.session_state.sy, st.session_state.sz = round((max_x - min_x) + 10.0, 3), round((max_y - min_y) + 10.0, 3), round((max_z - min_z) + 10.0, 3)
-                            st.rerun()
-                    except Exception as e: st.error(f"Erro Biopython: {e}")
+                            if res_labox.returncode == 0:
+                                output = res_labox.stdout
+                                match_center = re.search(r'X\s+([-\d.]+)\s+Y\s+([-\d.]+)\s+Z\s+([-\d.]+)', output)
+                                match_size = re.search(r'W\s+([-\d.]+)\s+H\s+([-\d.]+)\s+D\s+([-\d.]+)', output)
+                                if match_center and match_size:
+                                    st.session_state.cx, st.session_state.cy, st.session_state.cz = map(float, match_center.groups())
+                                    st.session_state.sx, st.session_state.sy, st.session_state.sz = map(float, match_size.groups())
+                                    st.rerun() 
+                            else:
+                                st.error("Erro no LaBOX ao escanear a proteína.")
+                    except Exception as e: st.error(f"Erro: {e}")
 
     with col_box2:
         st.markdown("### Coordenadas Dinâmicas (Å)")
@@ -469,7 +474,7 @@ with tab_gridbox:
         sy = c_y.number_input("Size H", key='sy', step=0.1, value=st.session_state.sy)
         sz = c_z.number_input("Size D", key='sz', step=0.1, value=st.session_state.sz)
 
-        # SUBSTITUIÇÃO: Botão para Checkbox (Evita que o grid suma ao clicar fora)
+        # Visualizador fixo com Checkbox
         if st.checkbox("Visualizar Caixa 3D (Manter ativado)"):
             if os.path.exists(st.session_state.rec_pdb_final):
                 with open(st.session_state.rec_pdb_final, 'r') as f:
@@ -498,12 +503,11 @@ with tab_vina:
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
         
-        # DETECÇÃO AUTOMÁTICA DE CPU (Oculta para o usuário, mas processada nos bastidores)
+        # Detecção automática de processadores (Oculto no Vina, mas detectado pelo OS)
         max_cpus = multiprocessing.cpu_count()
-        st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
+        st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina/nuvem.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
-        # Incluímos a variável cpu no arquivo de config gerado pro Vina
         if st.session_state.vs_mode:
             config_content = f"receptor = {vina_receptor}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {max_cpus}\n"
         else:
@@ -543,7 +547,7 @@ with tab_executar:
                         os.chmod(vina_exe, 0o755)
                     
                     st.session_state.vs_results_dir = output_dir_input
-                    progress_bar = st.progress(0)
+                    progress_bar = st.progress(0, text="Iniciando cálculos termodinâmicos...")
                     
                     with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes (Multicore)..."):
                         log_outputs = ""
@@ -555,11 +559,11 @@ with tab_executar:
                             res_vs = subprocess.run(cmd_batch, shell=True, capture_output=True, text=True)
                             log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vs.stdout
                             
-                            progress_bar.progress(int((rep / 3.0) * 100))
+                            progress_bar.progress(int((rep / 3.0) * 100), text=f"Calculando Replicata {rep} de 3...")
                             
+                        st.session_state.vina_log_output = log_outputs 
+                        progress_bar.empty()
                         st.success(f"🎉 Triagem Virtual em Triplicata concluída! Os resultados foram separados nas pastas `rep1`, `rep2` e `rep3` dentro de `{output_dir_input}/`")
-                        with st.expander("📝 Visualizar Log Bruto do Batch (AutoDock Vina)"):
-                            st.text_area("Log do Vina:", value=log_outputs, height=400)
                 except Exception as e: st.error(f"Erro do sistema: {e}")
 
     else:
@@ -580,7 +584,7 @@ with tab_executar:
                         with open(vina_exe, 'wb') as f: f.write(r_vina.content)
                         os.chmod(vina_exe, 0o755)
                     
-                    progress_bar = st.progress(0)
+                    progress_bar = st.progress(0, text="Calculando energias de interação...")
                     log_outputs = ""
                     with st.spinner(f"Computando interações termodinâmicas usando {multiprocessing.cpu_count()} núcleos (3x vezes)..."):
                         for rep in range(1, 4):
@@ -588,13 +592,19 @@ with tab_executar:
                             res_vina = subprocess.run([f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep], capture_output=True, text=True)
                             log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vina.stdout
                             
-                            progress_bar.progress(int((rep / 3.0) * 100))
+                            progress_bar.progress(int((rep / 3.0) * 100), text=f"Replicata {rep} de 3 concluída...")
                         
-                        st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
+                        progress_bar.empty()
+                        st.session_state.vina_log_output = log_outputs 
                         st.session_state.single_result_base = output_pdbqt_base
-                        with st.expander("📝 Visualizar Log de Execução (AutoDock Vina)"):
-                            st.text_area("Log Bruto do Terminal:", value=log_outputs, height=300)
+                        st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
                 except Exception as e: st.error(f"Erro: {e}")
+                
+    # --- VISUALIZAÇÃO DE LOG PERSISTENTE ---
+    if st.session_state.vina_log_output:
+        st.divider()
+        if st.checkbox("Exibir Log de Execução do AutoDock Vina (Terminal)"):
+            st.text_area("Saída Bruta do Algoritmo Termodinâmico:", value=st.session_state.vina_log_output, height=400)
 
 # ==========================================
 # ABA 7: Análise Químico-Estrutural
