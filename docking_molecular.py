@@ -109,6 +109,7 @@ if 'redocking_mode' not in st.session_state: st.session_state.redocking_mode = F
 if 'extracted_lig_pdb' not in st.session_state: st.session_state.extracted_lig_pdb = ""
 if 'vs_mode' not in st.session_state: st.session_state.vs_mode = False
 if 'vs_results_dir' not in st.session_state: st.session_state.vs_results_dir = ""
+if 'vina_log_output' not in st.session_state: st.session_state.vina_log_output = "" # Memória persistente para o Log
 
 # Abas
 tab_install, tab_receptor, tab_ligante, tab_gridbox, tab_vina, tab_executar, tab_visualizar, tab_referencias = st.tabs([
@@ -557,9 +558,8 @@ with tab_executar:
                             
                             progress_bar.progress(int((rep / 3.0) * 100))
                             
+                        st.session_state.vina_log_output = log_outputs # Salva log na memória
                         st.success(f"🎉 Triagem Virtual em Triplicata concluída! Os resultados foram separados nas pastas `rep1`, `rep2` e `rep3` dentro de `{output_dir_input}/`")
-                        with st.expander("📝 Visualizar Log Bruto do Batch (AutoDock Vina)"):
-                            st.text_area("Log do Vina:", value=log_outputs, height=400)
                 except Exception as e: st.error(f"Erro do sistema: {e}")
 
     else:
@@ -590,11 +590,16 @@ with tab_executar:
                             
                             progress_bar.progress(int((rep / 3.0) * 100))
                         
-                        st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
+                        st.session_state.vina_log_output = log_outputs # Salva log na memória
                         st.session_state.single_result_base = output_pdbqt_base
-                        with st.expander("📝 Visualizar Log de Execução (AutoDock Vina)"):
-                            st.text_area("Log Bruto do Terminal:", value=log_outputs, height=300)
+                        st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
                 except Exception as e: st.error(f"Erro: {e}")
+                
+    # --- VISUALIZAÇÃO DE LOG PERSISTENTE ---
+    if st.session_state.vina_log_output:
+        st.divider()
+        if st.checkbox("Exibir Log de Execução do AutoDock Vina (Terminal)"):
+            st.text_area("Saída Bruta do Algoritmo Termodinâmico:", value=st.session_state.vina_log_output, height=400)
 
 # ==========================================
 # ABA 7: Análise Químico-Estrutural
