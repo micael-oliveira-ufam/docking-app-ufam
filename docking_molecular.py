@@ -7,6 +7,8 @@ import re
 import glob
 from datetime import datetime
 import numpy as np
+import multiprocessing
+import concurrent.futures
 
 # Tenta importar as bibliotecas principais
 try:
@@ -17,6 +19,7 @@ try:
     import pubchempy as pcp
     from rdkit import Chem
     from rdkit.Chem import Draw
+    from rdkit.Chem import AllChem  # <-- Importação vital para 3D rápido
     import pandas as pd
     from Bio.PDB import PDBParser
     LIBS_INSTALADAS = True
@@ -89,7 +92,7 @@ with st.sidebar:
 st.title("🧬 Laboratório Virtual: Docking Molecular e Triagem")
 st.markdown("Plataforma acadêmica para ensino de **Química Medicinal Computacional** e **Planejamento de Fármacos**.")
 
-# Inicialização das variáveis de memória do Streamlit (Proteção contra reload)
+# Inicialização das variáveis de memória do Streamlit
 if 'cx' not in st.session_state: st.session_state.cx = 0.0
 if 'cy' not in st.session_state: st.session_state.cy = 0.0
 if 'cz' not in st.session_state: st.session_state.cz = 0.0
@@ -209,11 +212,11 @@ with tab_ligante:
     
     with st.expander("📚 Fundamentos: Minimização e Triagem Virtual (Virtual Screening)", expanded=False):
         st.markdown("""
-        ### Minimização de Energia (MMFF94)
-        O OpenBabel usa campos de força matemáticos (mecânica clássica) para distender e organizar as ligações, achando a conformação 3D de menor energia no vácuo.
+        ### Otimização Tridimensional Rápida (RDKit)
+        A geração 3D e o relaxamento do campo de força (MMFF94) agora são executados via `RDKit (ETKDG)`, conferindo otimização em frações de segundo para nuvem.
         
-        ### Triagem Virtual (Virtual Screening)
-        Para testar bibliotecas inteiras, a plataforma permite enviar vários arquivos individuais ou um único arquivo contendo múltiplas moléculas. O algoritmo inteligentemente as separa, otimiza e converte para o formato `.pdbqt`.
+        ### Triagem Virtual Paralelizada (Virtual Screening)
+        O algoritmo HTVS processa os arquivos enviados utilizando múltiplos núcleos (Multiprocessing), dividindo a conversão de `SDF/MOL2` para `PDBQT` acelerando o fluxo imensamente.
         """)
 
     modo_preparacao = st.radio("Selecione a Estratégia de Processamento:", [
@@ -269,16 +272,37 @@ with tab_ligante:
 
             if st.session_state.smiles:
                 st.info(f"O sistema salvará os arquivos como: **{st.session_state.nome_ligante_salvar}**")
-                if st.button("2. Minimizar (3D) e Gerar PDBQT", type="primary"):
-                    mol2_file = f"{st.session_state.nome_ligante_salvar}.mol2"
+                
+                # BOTAO OTIMIZADO PARA NUVEM (RDKIT)
+                if st.button("2. Minimizar (3D) Rápido e Gerar PDBQT", type="primary"):
+                    sdf_file = f"{st.session_state.nome_ligante_salvar}.sdf"
                     pdbqt_file = f"{st.session_state.nome_ligante_salvar}.pdbqt"
-                    with st.spinner("Calculando conformação de menor energia (MMFF94)..."):
-                        subprocess.run(["obabel", f"-:{st.session_state.smiles}", "-O", mol2_file, "--gen3d"], capture_output=True)
-                        if os.path.exists(mol2_file):
-                            st.session_state.mol2_file_path = mol2_file 
-                            subprocess.run(["obabel", "-imol2", mol2_file, "-opdbqt", "-O", pdbqt_file, "-p", "7.4", "--partialcharge", "gasteiger"], capture_output=True)
-                            st.session_state.lig_final = pdbqt_file 
-                            st.success(f"Ligante 3D otimizado com cargas de Gasteiger: '{pdbqt_file}'")
+                    
+                    with st.spinner("Gerando 3D ultrarrápido (RDKit ETKDG + MMFF94)..."):
+                        try:
+                            # 1. Geração 3D e minimização instantânea via RDKit
+                            mol_3d = Chem.MolFromSmiles(st.session_state.smiles)
+                            mol_3d = Chem.AddHs(mol_3d) # Adiciona hidrogênios
+                            
+                            # Algoritmo ETKDG para gerar conformação 3D
+                            AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG()) 
+                            # Otimização fina do campo de força
+                            AllChem.MMFFOptimizeMolecule(mol_3d) 
+                            
+                            # Salva a molécula em SDF
+                            writer = Chem.SDWriter(sdf_file)
+                            writer.write(mol_3d)
+                            writer.close()
+                            
+                            # 2. Usa OpenBabel APENAS para calcular cargas e converter formato
+                            subprocess.run(["obabel", "-isdf", sdf_file, "-opdbqt", "-O", pdbqt_file, "-p", "7.4", "--partialcharge", "gasteiger"], capture_output=True)
+                            
+                            if os.path.exists(sdf_file) and os.path.exists(pdbqt_file):
+                                st.session_state.mol2_file_path = sdf_file # Atualiza para o SDF
+                                st.session_state.lig_final = pdbqt_file 
+                                st.success(f"Ligante 3D otimizado com sucesso: '{pdbqt_file}'")
+                        except Exception as e:
+                            st.error(f"Falha na geração 3D acelerada: {e}")
 
         with col_2d:
             st.markdown("### Topologia 2D")
@@ -289,7 +313,11 @@ with tab_ligante:
             if 'mol2_file_path' in st.session_state and os.path.exists(st.session_state.mol2_file_path):
                 with open(st.session_state.mol2_file_path, 'r') as f:
                     viewer_lig = py3Dmol.view(width=300, height=300)
-                    viewer_lig.addModel(f.read(), "mol2")
+                    
+                    # Identifica se é sdf ou mol2 dinamicamente
+                    formato = "sdf" if st.session_state.mol2_file_path.endswith(".sdf") else "mol2"
+                    
+                    viewer_lig.addModel(f.read(), formato)
                     viewer_lig.setStyle({"stick": {'colorscheme': 'greenCarbon'}})
                     viewer_lig.zoomTo()
                     html(viewer_lig._make_html(), width=300, height=300)
@@ -316,17 +344,16 @@ with tab_ligante:
     else:
         st.session_state.redocking_mode = False
         st.session_state.vs_mode = True
-        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS)")
+        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) - Paralelizado")
         st.write("Faça o upload de múltiplos arquivos individuais OU de um único arquivo contendo várias moléculas (ex: biblioteca.sdf). As moléculas corrompidas serão puladas automaticamente.")
         
         uploaded_files = st.file_uploader("Arquivos de Biblioteca de Fármacos", type=['sdf', 'mol2', 'pdb'], accept_multiple_files=True)
         
         if uploaded_files:
-            if st.button("Processar, Otimizar e Converter para PDBQT", type="primary"):
+            if st.button("Processar Lote (Multi-Core)", type="primary"):
                 os.makedirs("Ligantes_temp", exist_ok=True)
                 os.makedirs("Ligantes", exist_ok=True)
                 
-                # Limpeza preventiva apenas ao clicar no botão
                 for f in glob.glob("Ligantes_temp/*"): os.remove(f)
                 for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f)
                 
@@ -337,33 +364,45 @@ with tab_ligante:
                         f.write(uf.getbuffer())
                     temp_paths.append(t_path)
                 
+                # --- FUNÇÃO DE PROCESSAMENTO PARALELO ---
+                def process_single_file(t_path):
+                    sucesso, falha = 0, 0
+                    base_name = os.path.splitext(os.path.basename(t_path))[0]
+                    out_mol2_prefix = f"Ligantes_temp/{base_name}_.mol2"
+                    
+                    cmd_3d = ["obabel", t_path, "-omol2", "-O", out_mol2_prefix, "-m", "--gen3d", "-e"]
+                    res_3d = subprocess.run(cmd_3d, capture_output=True, text=True)
+                    
+                    log = res_3d.stderr + " " + res_3d.stdout
+                    m_conv = re.search(r'(\d+)\s+molecules?\s+converted', log, re.IGNORECASE)
+                    m_err = re.search(r'(\d+)\s+errors?', log, re.IGNORECASE)
+                    if m_conv: sucesso += int(m_conv.group(1))
+                    if m_err: falha += int(m_err.group(1))
+                        
+                    for m2 in glob.glob(f"Ligantes_temp/{base_name}_*.mol2"):
+                        base_m2 = os.path.basename(m2).replace(".mol2", "")
+                        final_pdbqt = f"Ligantes/{base_m2}.pdbqt"
+                        subprocess.run(["obabel", "-imol2", m2, "-opdbqt", "-O", final_pdbqt, "-p", "7.4", "--partialcharge", "gasteiger"])
+                        
+                    return sucesso, falha
+
+                # Inicia o paralelismo
                 total_sucesso = 0
                 total_falha = 0
+                nucleos_disponiveis = multiprocessing.cpu_count()
                 
-                with st.spinner("Particionando, minimizando em 3D e convertendo para PDBQT (Pode demorar)..."):
-                    for t_path in temp_paths:
-                        base_name = os.path.splitext(os.path.basename(t_path))[0]
-                        out_mol2_prefix = f"Ligantes_temp/{base_name}_.mol2"
-                        cmd_3d = ["obabel", t_path, "-omol2", "-O", out_mol2_prefix, "-m", "--gen3d", "-e"]
-                        res_3d = subprocess.run(cmd_3d, capture_output=True, text=True)
+                with st.spinner(f"Ativando paralelismo ({nucleos_disponiveis} núcleos). Particionando e convertendo..."):
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=nucleos_disponiveis) as executor:
+                        resultados = executor.map(process_single_file, temp_paths)
                         
-                        output_log = res_3d.stderr + " " + res_3d.stdout
-                        match_conv = re.search(r'(\d+)\s+molecules?\s+converted', output_log, re.IGNORECASE)
-                        match_err = re.search(r'(\d+)\s+errors?', output_log, re.IGNORECASE)
-                        if match_conv: total_sucesso += int(match_conv.group(1))
-                        if match_err: total_falha += int(match_err.group(1))
-                        
-                    mol2_files = glob.glob("Ligantes_temp/*.mol2")
-                    for m2 in mol2_files:
-                        base_m2 = os.path.basename(m2).replace(".mol2", "")
-                        out_pdbqt = f"Ligantes/{base_m2}.pdbqt"
-                        cmd_pdbqt = ["obabel", "-imol2", m2, "-opdbqt", "-O", out_pdbqt, "-p", "7.4", "--partialcharge", "gasteiger"]
-                        subprocess.run(cmd_pdbqt, capture_output=True)
+                        for suc, fal in resultados:
+                            total_sucesso += suc
+                            total_falha += fal
                     
                     qtd_gerados = len(glob.glob("Ligantes/*.pdbqt"))
                     
                     if qtd_gerados > 0:
-                        st.success(f"🎉 Triagem Virtual preparada! Foram separadas, otimizadas e convertidas {qtd_gerados} moléculas para `.pdbqt` na pasta 'Ligantes/'.")
+                        st.success(f"🎉 Triagem Virtual preparada! Foram separadas e convertidas {qtd_gerados} moléculas para `.pdbqt`.")
                         if total_falha > 0:
                             st.warning(f"⚠️ Atenção: {total_falha} molécula(s) descartadas devido a erros químicos ou topologia inválida.")
                         st.session_state.lig_final = "Múltiplos Ligantes (Modo Lote Ativado)"
@@ -461,20 +500,25 @@ with tab_vina:
     with col_conf1:
         vina_receptor = st.text_input("Receptor Alvo (.pdbqt):", value=st.session_state.rec_final)
         if st.session_state.vs_mode:
-            st.info("🔹 Modo Triagem Virtual Ativado: O arquivo de configuração não exige o nome do ligante, os arquivos serão processados em lote diretamente na execução.")
+            st.info("🔹 Modo Triagem Virtual Ativado: O arquivo de configuração não exige o nome do ligante.")
         else:
             vina_ligante = st.text_input("Ligante Teste (.pdbqt):", value=st.session_state.lig_final)
         
         vina_config_name = st.text_input("Salvar job como:", value="config.txt")
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
-        st.info("Coordenadas herdadas automaticamente da etapa anterior.")
+        
+        # --- SELETOR DE NÚCLEOS PARA ACELERAR VINA ---
+        max_cpus = multiprocessing.cpu_count()
+        vina_cpu = st.number_input("Núcleos de Processamento (CPU):", min_value=1, max_value=max_cpus, value=max_cpus)
+        st.caption(f"Sua máquina / servidor nuvem disponibiliza {max_cpus} núcleos lógicos.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
+        # Incluímos a variável cpu no arquivo config.txt
         if st.session_state.vs_mode:
-            config_content = f"receptor = {vina_receptor}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\n"
+            config_content = f"receptor = {vina_receptor}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {vina_cpu}\n"
         else:
-            config_content = f"receptor = {vina_receptor}\nligand = {vina_ligante}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\n"
+            config_content = f"receptor = {vina_receptor}\nligand = {vina_ligante}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {vina_cpu}\n"
             
         with open(vina_config_name, "w") as f: f.write(config_content)
         st.success(f"✅ Arquivo de configuração compilado com sucesso.")
@@ -504,7 +548,7 @@ with tab_executar:
             else:
                 try:
                     if not os.path.exists(vina_exe):
-                        st.info("Adquirindo binários Vina (Linux)...")
+                        st.info("Adquirindo binários Vina...")
                         r_vina = requests.get(f"https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/{vina_exe}")
                         with open(vina_exe, 'wb') as f: f.write(r_vina.content)
                         os.chmod(vina_exe, 0o755)
@@ -513,20 +557,15 @@ with tab_executar:
                     progress_bar = st.progress(0)
                     
                     with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes..."):
-                        log_outputs = ""
                         for rep in range(1, 4):
                             rep_dir = os.path.join(output_dir_input, f"rep{rep}")
                             os.makedirs(rep_dir, exist_ok=True)
                             
                             cmd_batch = f"./{vina_exe} --config {config_file_exec} --batch Ligantes/*.pdbqt --dir {rep_dir}"
-                            res_vs = subprocess.run(cmd_batch, shell=True, capture_output=True, text=True)
-                            log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vs.stdout
-                            
-                            progress_bar.progress(int((rep / 3.0) * 100))
+                            subprocess.run(cmd_batch, shell=True, capture_output=True, text=True)
+                            progress_bar.progress(rep * 33)
                             
                         st.success(f"🎉 Triagem Virtual em Triplicata concluída! Os resultados foram separados nas pastas `rep1`, `rep2` e `rep3` dentro de `{output_dir_input}/`")
-                        with st.expander("📝 Visualizar Log Bruto do Batch (AutoDock Vina)"):
-                            st.text_area("Log do Vina:", value=log_outputs, height=400)
                 except Exception as e: st.error(f"Erro do sistema: {e}")
 
     else:
@@ -548,19 +587,14 @@ with tab_executar:
                         os.chmod(vina_exe, 0o755)
                     
                     progress_bar = st.progress(0)
-                    log_outputs = ""
                     with st.spinner("Computando interações termodinâmicas (3x vezes)..."):
                         for rep in range(1, 4):
                             out_rep = f"{output_pdbqt_base}_rep{rep}.pdbqt"
-                            res_vina = subprocess.run([f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep], capture_output=True, text=True)
-                            log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vina.stdout
-                            
-                            progress_bar.progress(int((rep / 3.0) * 100))
+                            subprocess.run([f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep], capture_output=True)
+                            progress_bar.progress(rep * 33)
                         
                         st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
                         st.session_state.single_result_base = output_pdbqt_base
-                        with st.expander("📝 Visualizar Log de Execução (AutoDock Vina)"):
-                            st.text_area("Log Bruto do Terminal:", value=log_outputs, height=300)
                 except Exception as e: st.error(f"Erro: {e}")
 
 # ==========================================
@@ -840,7 +874,7 @@ with tab_visualizar:
     2. **LigPlot+** (EMBL-EBI)
     3. **Schrödinger Maestro** (Academic Version)
     
-    **Como utilizar:** Basta baixar os arquivos **PDB do Complexo Interativo** gerados nesta aba e abri-lo diretamente em qualquer um destes softwares. Eles identificarão automaticamente a proteína e o fármaco (HETATM) para desenhar o diagrama.
+    **Como utilizar:** Basta baixar os arquivos **PDB do Complexo Interativo** gerados nesta aba e abri-los diretamente em qualquer um destes softwares. Eles identificarão automaticamente a proteína e o fármaco (HETATM) para desenhar o diagrama.
     """)
 
 # ==========================================
