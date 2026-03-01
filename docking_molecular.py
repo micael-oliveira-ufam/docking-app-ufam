@@ -19,7 +19,7 @@ try:
     import pubchempy as pcp
     from rdkit import Chem
     from rdkit.Chem import Draw
-    from rdkit.Chem import AllChem  # <-- Importação vital para 3D rápido
+    from rdkit.Chem import AllChem
     import pandas as pd
     from Bio.PDB import PDBParser
     LIBS_INSTALADAS = True
@@ -273,32 +273,26 @@ with tab_ligante:
             if st.session_state.smiles:
                 st.info(f"O sistema salvará os arquivos como: **{st.session_state.nome_ligante_salvar}**")
                 
-                # BOTAO OTIMIZADO PARA NUVEM (RDKIT)
                 if st.button("2. Minimizar (3D) Rápido e Gerar PDBQT", type="primary"):
                     sdf_file = f"{st.session_state.nome_ligante_salvar}.sdf"
                     pdbqt_file = f"{st.session_state.nome_ligante_salvar}.pdbqt"
                     
                     with st.spinner("Gerando 3D ultrarrápido (RDKit ETKDG + MMFF94)..."):
                         try:
-                            # 1. Geração 3D e minimização instantânea via RDKit
                             mol_3d = Chem.MolFromSmiles(st.session_state.smiles)
-                            mol_3d = Chem.AddHs(mol_3d) # Adiciona hidrogênios
+                            mol_3d = Chem.AddHs(mol_3d) 
                             
-                            # Algoritmo ETKDG para gerar conformação 3D
                             AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG()) 
-                            # Otimização fina do campo de força
                             AllChem.MMFFOptimizeMolecule(mol_3d) 
                             
-                            # Salva a molécula em SDF
                             writer = Chem.SDWriter(sdf_file)
                             writer.write(mol_3d)
                             writer.close()
                             
-                            # 2. Usa OpenBabel APENAS para calcular cargas e converter formato
                             subprocess.run(["obabel", "-isdf", sdf_file, "-opdbqt", "-O", pdbqt_file, "-p", "7.4", "--partialcharge", "gasteiger"], capture_output=True)
                             
                             if os.path.exists(sdf_file) and os.path.exists(pdbqt_file):
-                                st.session_state.mol2_file_path = sdf_file # Atualiza para o SDF
+                                st.session_state.mol2_file_path = sdf_file 
                                 st.session_state.lig_final = pdbqt_file 
                                 st.success(f"Ligante 3D otimizado com sucesso: '{pdbqt_file}'")
                         except Exception as e:
@@ -313,10 +307,7 @@ with tab_ligante:
             if 'mol2_file_path' in st.session_state and os.path.exists(st.session_state.mol2_file_path):
                 with open(st.session_state.mol2_file_path, 'r') as f:
                     viewer_lig = py3Dmol.view(width=300, height=300)
-                    
-                    # Identifica se é sdf ou mol2 dinamicamente
                     formato = "sdf" if st.session_state.mol2_file_path.endswith(".sdf") else "mol2"
-                    
                     viewer_lig.addModel(f.read(), formato)
                     viewer_lig.setStyle({"stick": {'colorscheme': 'greenCarbon'}})
                     viewer_lig.zoomTo()
@@ -364,7 +355,6 @@ with tab_ligante:
                         f.write(uf.getbuffer())
                     temp_paths.append(t_path)
                 
-                # --- FUNÇÃO DE PROCESSAMENTO PARALELO ---
                 def process_single_file(t_path):
                     sucesso, falha = 0, 0
                     base_name = os.path.splitext(os.path.basename(t_path))[0]
@@ -386,7 +376,6 @@ with tab_ligante:
                         
                     return sucesso, falha
 
-                # Inicia o paralelismo
                 total_sucesso = 0
                 total_falha = 0
                 nucleos_disponiveis = multiprocessing.cpu_count()
@@ -473,14 +462,15 @@ with tab_gridbox:
     with col_box2:
         st.markdown("### Coordenadas Dinâmicas (Å)")
         c_x, c_y, c_z = st.columns(3)
-        cx = c_x.number_input("Center X", key='cx', step=0.1)
-        cy = c_y.number_input("Center Y", key='cy', step=0.1)
-        cz = c_z.number_input("Center Z", key='cz', step=0.1)
-        sx = c_x.number_input("Size W", key='sx', step=0.1)
-        sy = c_y.number_input("Size H", key='sy', step=0.1)
-        sz = c_z.number_input("Size D", key='sz', step=0.1)
+        cx = c_x.number_input("Center X", key='cx', step=0.1, value=st.session_state.cx)
+        cy = c_y.number_input("Center Y", key='cy', step=0.1, value=st.session_state.cy)
+        cz = c_z.number_input("Center Z", key='cz', step=0.1, value=st.session_state.cz)
+        sx = c_x.number_input("Size W", key='sx', step=0.1, value=st.session_state.sx)
+        sy = c_y.number_input("Size H", key='sy', step=0.1, value=st.session_state.sy)
+        sz = c_z.number_input("Size D", key='sz', step=0.1, value=st.session_state.sz)
 
-        if st.button("Validar Visualmente Caixa"):
+        # SUBSTITUIÇÃO: Botão para Checkbox (Evita que o grid suma ao clicar fora)
+        if st.checkbox("Visualizar Caixa 3D (Manter ativado)"):
             if os.path.exists(st.session_state.rec_pdb_final):
                 with open(st.session_state.rec_pdb_final, 'r') as f:
                     viewer = py3Dmol.view(width=500, height=400)
@@ -508,17 +498,16 @@ with tab_vina:
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
         
-        # --- SELETOR DE NÚCLEOS PARA ACELERAR VINA ---
+        # DETECÇÃO AUTOMÁTICA DE CPU (Oculta para o usuário, mas processada nos bastidores)
         max_cpus = multiprocessing.cpu_count()
-        vina_cpu = st.number_input("Núcleos de Processamento (CPU):", min_value=1, max_value=max_cpus, value=max_cpus)
-        st.caption(f"Sua máquina / servidor nuvem disponibiliza {max_cpus} núcleos lógicos.")
+        st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
-        # Incluímos a variável cpu no arquivo config.txt
+        # Incluímos a variável cpu no arquivo de config gerado pro Vina
         if st.session_state.vs_mode:
-            config_content = f"receptor = {vina_receptor}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {vina_cpu}\n"
+            config_content = f"receptor = {vina_receptor}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {max_cpus}\n"
         else:
-            config_content = f"receptor = {vina_receptor}\nligand = {vina_ligante}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {vina_cpu}\n"
+            config_content = f"receptor = {vina_receptor}\nligand = {vina_ligante}\n\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n\nsize_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n\nexhaustiveness = {vina_exhaustiveness}\ncpu = {max_cpus}\n"
             
         with open(vina_config_name, "w") as f: f.write(config_content)
         st.success(f"✅ Arquivo de configuração compilado com sucesso.")
@@ -548,7 +537,7 @@ with tab_executar:
             else:
                 try:
                     if not os.path.exists(vina_exe):
-                        st.info("Adquirindo binários Vina...")
+                        st.info("Adquirindo binários Vina (Linux)...")
                         r_vina = requests.get(f"https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/{vina_exe}")
                         with open(vina_exe, 'wb') as f: f.write(r_vina.content)
                         os.chmod(vina_exe, 0o755)
@@ -556,16 +545,21 @@ with tab_executar:
                     st.session_state.vs_results_dir = output_dir_input
                     progress_bar = st.progress(0)
                     
-                    with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes..."):
+                    with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes (Multicore)..."):
+                        log_outputs = ""
                         for rep in range(1, 4):
                             rep_dir = os.path.join(output_dir_input, f"rep{rep}")
                             os.makedirs(rep_dir, exist_ok=True)
                             
                             cmd_batch = f"./{vina_exe} --config {config_file_exec} --batch Ligantes/*.pdbqt --dir {rep_dir}"
-                            subprocess.run(cmd_batch, shell=True, capture_output=True, text=True)
-                            progress_bar.progress(rep * 33)
+                            res_vs = subprocess.run(cmd_batch, shell=True, capture_output=True, text=True)
+                            log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vs.stdout
+                            
+                            progress_bar.progress(int((rep / 3.0) * 100))
                             
                         st.success(f"🎉 Triagem Virtual em Triplicata concluída! Os resultados foram separados nas pastas `rep1`, `rep2` e `rep3` dentro de `{output_dir_input}/`")
+                        with st.expander("📝 Visualizar Log Bruto do Batch (AutoDock Vina)"):
+                            st.text_area("Log do Vina:", value=log_outputs, height=400)
                 except Exception as e: st.error(f"Erro do sistema: {e}")
 
     else:
@@ -587,14 +581,19 @@ with tab_executar:
                         os.chmod(vina_exe, 0o755)
                     
                     progress_bar = st.progress(0)
-                    with st.spinner("Computando interações termodinâmicas (3x vezes)..."):
+                    log_outputs = ""
+                    with st.spinner(f"Computando interações termodinâmicas usando {multiprocessing.cpu_count()} núcleos (3x vezes)..."):
                         for rep in range(1, 4):
                             out_rep = f"{output_pdbqt_base}_rep{rep}.pdbqt"
-                            subprocess.run([f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep], capture_output=True)
-                            progress_bar.progress(rep * 33)
+                            res_vina = subprocess.run([f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep], capture_output=True, text=True)
+                            log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vina.stdout
+                            
+                            progress_bar.progress(int((rep / 3.0) * 100))
                         
                         st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
                         st.session_state.single_result_base = output_pdbqt_base
+                        with st.expander("📝 Visualizar Log de Execução (AutoDock Vina)"):
+                            st.text_area("Log Bruto do Terminal:", value=log_outputs, height=300)
                 except Exception as e: st.error(f"Erro: {e}")
 
 # ==========================================
