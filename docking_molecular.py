@@ -5,6 +5,7 @@ import sys
 import requests
 import re
 import glob
+import time
 from datetime import datetime
 import numpy as np
 import multiprocessing
@@ -21,9 +22,36 @@ try:
     from rdkit.Chem import AllChem
     import pandas as pd
     from Bio.PDB import PDBParser
+    import plotly.express as px
     LIBS_INSTALADAS = True
 except ImportError:
     LIBS_INSTALADAS = False
+
+# ==========================================
+# FUNÇÕES DE CONTROLE DE SERVIDOR (TRAVA GLOBAL)
+# ==========================================
+LOCK_FILE = "vina_execution.lock"
+
+def is_server_busy():
+    """Verifica se o servidor está rodando Vina para outro usuário."""
+    if os.path.exists(LOCK_FILE):
+        # Proteção Anti-Zumbi: Se o lock tem mais de 30 minutos, apaga (caso o app tenha travado antes)
+        file_age = time.time() - os.path.getmtime(LOCK_FILE)
+        if file_age > 1800: 
+            os.remove(LOCK_FILE)
+            return False
+        return True
+    return False
+
+def lock_server():
+    """Bloqueia o servidor para outros usuários."""
+    with open(LOCK_FILE, 'w') as f:
+        f.write(f"Running Vina. Locked at {datetime.now()}")
+
+def unlock_server():
+    """Libera o servidor para o próximo usuário."""
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
 
 # ==========================================
 # FUNÇÕES AUXILIARES
@@ -213,10 +241,10 @@ with tab_ligante:
     with st.expander("📚 Fundamentos: Minimização e Triagem Virtual (Virtual Screening)", expanded=False):
         st.markdown("""
         ### Otimização Tridimensional Rápida (RDKit)
-        A geração 3D e o relaxamento do campo de força (MMFF94) da molécula são executados via `RDKit (ETKDG)`.
+        A geração 3D e o relaxamento do campo de força (MMFF94) da molécula são executados via `RDKit (ETKDG)`, conferindo otimização em frações de segundo para nuvem.
         
-        ### Triagem Virtual (Virtual Screening)
-        O algoritmo HTVS processa arquivos enviados de forma sequencial (uma molécula por vez), dividindo a conversão de `SDF/MOL2` para `PDBQT` garantindo estabilidade do sistema e evitando falhas na nuvem.
+        ### Triagem Virtual Sequencial (Virtual Screening)
+        O algoritmo HTVS processa arquivos enviados de forma sequencial (uma molécula por vez), extraindo as matrizes via OpenBabel, gerando a conformação geométrica nativa 3D com RDKit, e finalmente convertendo para PDBQT, garantindo extrema estabilidade de memória em ambientes Cloud.
         """)
 
     modo_preparacao = st.radio("Selecione a Estratégia de Processamento:", [
@@ -335,7 +363,7 @@ with tab_ligante:
     else:
         st.session_state.redocking_mode = False
         st.session_state.vs_mode = True
-        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) Sequencial")
+        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) - Sequencial Otimizado")
         st.write("Faça o upload de múltiplos arquivos individuais OU de um único arquivo contendo várias moléculas (ex: biblioteca.sdf).")
         
         uploaded_files = st.file_uploader("Arquivos de Biblioteca de Fármacos", type=['sdf', 'mol2', 'pdb'], accept_multiple_files=True)
@@ -345,6 +373,7 @@ with tab_ligante:
                 os.makedirs("Ligantes_temp", exist_ok=True)
                 os.makedirs("Ligantes", exist_ok=True)
                 
+                # Limpeza de memória
                 for f in glob.glob("Ligantes_temp/*"): os.remove(f)
                 for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f)
                 
@@ -358,46 +387,71 @@ with tab_ligante:
                 total_sucesso = 0
                 total_falha = 0
                 
-                # Barra de progresso para a triagem em lote
-                progress_text = "Iniciando processamento sequencial..."
+                progress_text = "Iniciando processamento sequencial seguro..."
                 my_bar = st.progress(0, text=progress_text)
                 
                 for idx, t_path in enumerate(temp_paths):
                     base_name = os.path.splitext(os.path.basename(t_path))[0]
-                    out_mol2_prefix = f"Ligantes_temp/{base_name}_.mol2"
+                    out_sdf_prefix = f"Ligantes_temp/{base_name}_.sdf"
                     
-                    # Passo 1: Separar e gerar estrutura 3D ignorando erros
-                    cmd_3d = ["obabel", t_path, "-omol2", "-O", out_mol2_prefix, "-m", "--gen3d", "-e"]
-                    res_3d = subprocess.run(cmd_3d, capture_output=True, text=True)
+                    # Passo 1: Separar o arquivo bruto em SDFs individuais (OpenBabel)
+                    cmd_split = ["obabel", t_path, "-osdf", "-O", out_sdf_prefix, "-m", "-e"]
+                    subprocess.run(cmd_split, capture_output=True, text=True)
                     
-                    log = res_3d.stderr + " " + res_3d.stdout
-                    m_conv = re.search(r'(\d+)\s+molecules?\s+converted', log, re.IGNORECASE)
-                    m_err = re.search(r'(\d+)\s+errors?', log, re.IGNORECASE)
-                    if m_conv: total_sucesso += int(m_conv.group(1))
-                    if m_err: total_falha += int(m_err.group(1))
-                        
-                    # Passo 2: Converter as saídas para PDBQT
-                    for m2 in glob.glob(f"Ligantes_temp/{base_name}_*.mol2"):
-                        base_m2 = os.path.basename(m2).replace(".mol2", "")
-                        final_pdbqt = f"Ligantes/{base_m2}.pdbqt"
-                        subprocess.run(["obabel", "-imol2", m2, "-opdbqt", "-O", final_pdbqt, "-p", "7.4", "--partialcharge", "gasteiger"])
+                    sdf_files = glob.glob(f"Ligantes_temp/{base_name}_*.sdf")
+                    
+                    # Passo 2: RDKit (Geometria 3D rápida) e OpenBabel (Cargas Gasteiger e PDBQT)
+                    for sdf_split in sdf_files:
+                        try:
+                            suppl = Chem.SDMolSupplier(sdf_split)
+                            mol = next(suppl) if suppl else None
+                            
+                            if mol is not None:
+                                # RDKit: Gera 3D com hidrogênios
+                                mol_3d = Chem.AddHs(mol)
+                                res_embed = AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG())
+                                
+                                if res_embed == 0: 
+                                    AllChem.MMFFOptimizeMolecule(mol_3d)
+                                    
+                                    # Sobrescreve o arquivo com a estrutura 3D minimizada
+                                    writer = Chem.SDWriter(sdf_split)
+                                    writer.write(mol_3d)
+                                    writer.close()
+                                    
+                                    # OpenBabel: Cargas Gasteiger e conversão PDBQT
+                                    base_m2 = os.path.basename(sdf_split).replace(".sdf", "")
+                                    final_pdbqt = f"Ligantes/{base_m2}.pdbqt"
+                                    
+                                    subprocess.run(["obabel", "-isdf", sdf_split, "-opdbqt", "-O", final_pdbqt, "-p", "7.4", "--partialcharge", "gasteiger"], capture_output=True)
+                                    
+                                    if os.path.exists(final_pdbqt):
+                                        total_sucesso += 1
+                                    else:
+                                        total_falha += 1
+                                else:
+                                    total_falha += 1
+                            else:
+                                total_falha += 1
+                        except Exception:
+                            total_falha += 1
                     
                     percentual = int(((idx + 1) / len(temp_paths)) * 100)
-                    my_bar.progress(percentual, text=f"Processado arquivo {idx+1} de {len(temp_paths)}...")
+                    my_bar.progress(percentual, text=f"Processado arquivo de biblioteca {idx+1} de {len(temp_paths)}...")
                 
-                my_bar.empty() # Esconde a barra quando terminar
+                my_bar.empty() # Remove a barra ao concluir
                 qtd_gerados = len(glob.glob("Ligantes/*.pdbqt"))
                 
                 if qtd_gerados > 0:
-                    st.success(f"🎉 Triagem Virtual preparada! Foram separadas e convertidas {qtd_gerados} moléculas para `.pdbqt`.")
+                    st.success(f"🎉 Triagem Virtual preparada! Foram separadas, otimizadas em 3D (RDKit) e convertidas (OpenBabel) {qtd_gerados} moléculas de forma segura.")
                     if total_falha > 0:
-                        st.warning(f"⚠️ Atenção: {total_falha} molécula(s) descartadas devido a erros químicos ou topologia inválida.")
+                        st.warning(f"⚠️ Atenção: {total_falha} molécula(s) descartadas do lote devido a erros químicos ou de topologia.")
                     st.session_state.lig_final = "Múltiplos Ligantes (Modo Lote Ativado)"
                 else:
-                    st.error("Nenhuma molécula estruturalmente válida pôde ser extraída. Verifique os arquivos.")
+                    st.error("Nenhuma molécula estruturalmente válida pôde ser extraída. Verifique os arquivos submetidos.")
 
 # ==========================================
-# ABA 4: Grid Box (LaBOX / Biopython)
+# ABA 4: Grid Box (LaBOX)
 # ==========================================
 with tab_gridbox:
     st.header("4. Mapeamento do Espaço de Busca (Grid Box)")
@@ -419,10 +473,11 @@ with tab_gridbox:
                     st.error("Arquivo PDB de referência não encontrado.")
                 else:
                     try:
-                        with st.spinner("Mapeando vizinhança topológica..."):
+                        with st.spinner("Mapeando vizinhança topológica com LaBOX..."):
                             if not os.path.exists("LaBOX.py"):
                                 r_labox = requests.get("https://raw.githubusercontent.com/RyanZR/LaBOX/main/LaBOX.py")
                                 with open("LaBOX.py", "w") as f: f.write(r_labox.text)
+                                
                             res_labox = subprocess.run([sys.executable, "LaBOX.py", "-l", box_input_pdb, "-c"], capture_output=True, text=True)
                             
                             if res_labox.returncode == 0:
@@ -434,7 +489,7 @@ with tab_gridbox:
                                     st.session_state.sx, st.session_state.sy, st.session_state.sz = map(float, match_size.groups())
                                     st.rerun() 
                             else:
-                                st.error("Erro interno no LaBOX.")
+                                st.error("Erro interno no LaBOX ao processar o ligante.")
                     except Exception as e: st.error(f"Erro: {e}")
 
     else:
@@ -445,7 +500,7 @@ with tab_gridbox:
                     st.error("Erro: Arquivo PDB não encontrado.")
                 else:
                     try:
-                        with st.spinner("Mapeando limites globais com LaBOX..."):
+                        with st.spinner("Mapeando limites estruturais globais com LaBOX..."):
                             if not os.path.exists("LaBOX.py"):
                                 r_labox = requests.get("https://raw.githubusercontent.com/RyanZR/LaBOX/main/LaBOX.py")
                                 with open("LaBOX.py", "w") as f: f.write(r_labox.text)
@@ -461,7 +516,7 @@ with tab_gridbox:
                                     st.session_state.sx, st.session_state.sy, st.session_state.sz = map(float, match_size.groups())
                                     st.rerun() 
                             else:
-                                st.error("Erro no LaBOX ao escanear a proteína.")
+                                st.error("Erro interno no LaBOX ao processar o receptor.")
                     except Exception as e: st.error(f"Erro: {e}")
 
     with col_box2:
@@ -474,7 +529,6 @@ with tab_gridbox:
         sy = c_y.number_input("Size H", key='sy', step=0.1, value=st.session_state.sy)
         sz = c_z.number_input("Size D", key='sz', step=0.1, value=st.session_state.sz)
 
-        # Visualizador fixo com Checkbox
         if st.checkbox("Visualizar Caixa 3D (Manter ativado)"):
             if os.path.exists(st.session_state.rec_pdb_final):
                 with open(st.session_state.rec_pdb_final, 'r') as f:
@@ -503,9 +557,8 @@ with tab_vina:
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
         
-        # Detecção automática de processadores (Oculto no Vina, mas detectado pelo OS)
         max_cpus = multiprocessing.cpu_count()
-        st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina/nuvem.")
+        st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
         if st.session_state.vs_mode:
@@ -518,7 +571,7 @@ with tab_vina:
         with open(vina_config_name, "r") as f: st.code(f.read(), language="ini")
 
 # ==========================================
-# ABA 6: Execução do Docking Molecular (Triplicata)
+# ABA 6: Execução do Docking Molecular (C/ Trava de Fila)
 # ==========================================
 with tab_executar:
     st.header("6. Simulação Termodinâmica em Triplicata")
@@ -538,8 +591,12 @@ with tab_executar:
         if st.button("▶️ Iniciar Triagem HTVS em Triplicata", type="primary"):
             if not os.path.exists(config_file_exec):
                 st.error("Arquivo de configuração não encontrado.")
+            elif is_server_busy():
+                st.error("⏳ **Servidor Ocupado:** Outro pesquisador está executando um cálculo termodinâmico no momento. Por favor, aguarde alguns minutos para não sobrecarregar a nuvem gratuita.")
             else:
                 try:
+                    lock_server() # Bloqueia o servidor
+                    
                     if not os.path.exists(vina_exe):
                         st.info("Adquirindo binários Vina (Linux)...")
                         r_vina = requests.get(f"https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/{vina_exe}")
@@ -564,7 +621,10 @@ with tab_executar:
                         st.session_state.vina_log_output = log_outputs 
                         progress_bar.empty()
                         st.success(f"🎉 Triagem Virtual em Triplicata concluída! Os resultados foram separados nas pastas `rep1`, `rep2` e `rep3` dentro de `{output_dir_input}/`")
-                except Exception as e: st.error(f"Erro do sistema: {e}")
+                except Exception as e: 
+                    st.error(f"Erro do sistema: {e}")
+                finally:
+                    unlock_server() # Libera o servidor mesmo se der erro
 
     else:
         # Modo Individual em Triplicata
@@ -577,8 +637,12 @@ with tab_executar:
         if st.button("▶️ Iniciar Docking em Triplicata", type="primary"):
             if not os.path.exists(config_file_exec):
                 st.error("⚠️ Arquivo de configuração não encontrado.")
+            elif is_server_busy():
+                st.error("⏳ **Servidor Ocupado:** Outro pesquisador está executando um cálculo termodinâmico no momento. Por favor, aguarde alguns minutos para não sobrecarregar a nuvem gratuita.")
             else:
                 try:
+                    lock_server() # Bloqueia o servidor
+                    
                     if not os.path.exists(vina_exe):
                         r_vina = requests.get(f"https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/{vina_exe}")
                         with open(vina_exe, 'wb') as f: f.write(r_vina.content)
@@ -598,7 +662,10 @@ with tab_executar:
                         st.session_state.vina_log_output = log_outputs 
                         st.session_state.single_result_base = output_pdbqt_base
                         st.success("Simulação em triplicata concluída! Vá para a Aba 7 para ver as médias.")
-                except Exception as e: st.error(f"Erro: {e}")
+                except Exception as e: 
+                    st.error(f"Erro: {e}")
+                finally:
+                    unlock_server() # Libera o servidor mesmo se der erro
                 
     # --- VISUALIZAÇÃO DE LOG PERSISTENTE ---
     if st.session_state.vina_log_output:
@@ -651,6 +718,16 @@ with tab_visualizar:
                 if data_results:
                     df_results = pd.DataFrame(data_results).sort_values(by="Média (kcal/mol)")
                     st.dataframe(df_results, use_container_width=True, hide_index=True)
+                    
+                    # --- GRÁFICO INTERATIVO DE AFINIDADE E DESVIO PADRÃO ---
+                    st.markdown("### 📊 Gráfico de Afinidade Termodinâmica")
+                    fig = px.bar(df_results, x="Ligante", y="Média (kcal/mol)", error_y="Desvio Padrão", 
+                                 title="Energia Livre de Gibbs (ΔG) por Ligante",
+                                 labels={"Média (kcal/mol)": "Afinidade (kcal/mol)", "Ligante": "Molécula"},
+                                 color="Média (kcal/mol)", color_continuous_scale="Viridis")
+                    fig.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig, use_container_width=True)
+
                 else:
                     st.warning("Não foi possível ler os arquivos de afinidade gerados.")
 
@@ -772,6 +849,14 @@ with tab_visualizar:
                     "Rep 1": v1, "Rep 2": v2, "Rep 3": v3
                 }])
                 st.dataframe(df_single, use_container_width=True, hide_index=True)
+                
+                # --- GRÁFICO INTERATIVO DE AFINIDADE E DESVIO PADRÃO (SINGLE) ---
+                st.markdown("### 📊 Gráfico de Afinidade Termodinâmica")
+                fig = px.bar(df_single, x="Ligante (Alvo Único)", y="Média (kcal/mol)", error_y="Desvio Padrão", 
+                             title="Energia Livre de Gibbs (ΔG) do Complexo",
+                             labels={"Média (kcal/mol)": "Afinidade (kcal/mol)", "Ligante (Alvo Único)": "Molécula"},
+                             color="Média (kcal/mol)", color_continuous_scale="Viridis")
+                st.plotly_chart(fig, use_container_width=True)
 
             st.divider()
 
