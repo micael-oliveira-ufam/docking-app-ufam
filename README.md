@@ -10,6 +10,8 @@ Plataforma unificada para **Planejamento de Fármacos Baseado em Estrutura (SBDD
 👤 **Autoria:** Micael Davi Lima de Oliveira (Iniciação Científica)  
 🏛️ **Instituição:** Faculdade de Ciências Farmacêuticas (FCF) - Universidade Federal do Amazonas (UFAM)
 
+https://docking-app-ufam.streamlit.app/
+
 ---
 
 ## 🎯 Finalidade: Ensino e Pesquisa
