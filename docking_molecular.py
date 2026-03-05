@@ -6,6 +6,8 @@ import requests
 import re
 import glob
 import time
+import io             # <-- Novo: Para manipular bytes em memória
+import zipfile        # <-- Novo: Para criar o arquivo compactado
 from datetime import datetime
 import numpy as np
 import multiprocessing
@@ -373,7 +375,6 @@ with tab_ligante:
                 os.makedirs("Ligantes_temp", exist_ok=True)
                 os.makedirs("Ligantes", exist_ok=True)
                 
-                # Limpeza de memória
                 for f in glob.glob("Ligantes_temp/*"): os.remove(f)
                 for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f)
                 
@@ -394,32 +395,27 @@ with tab_ligante:
                     base_name = os.path.splitext(os.path.basename(t_path))[0]
                     out_sdf_prefix = f"Ligantes_temp/{base_name}_.sdf"
                     
-                    # Passo 1: Separar o arquivo bruto em SDFs individuais (OpenBabel)
                     cmd_split = ["obabel", t_path, "-osdf", "-O", out_sdf_prefix, "-m", "-e"]
                     subprocess.run(cmd_split, capture_output=True, text=True)
                     
                     sdf_files = glob.glob(f"Ligantes_temp/{base_name}_*.sdf")
                     
-                    # Passo 2: RDKit (Geometria 3D rápida) e OpenBabel (Cargas Gasteiger e PDBQT)
                     for sdf_split in sdf_files:
                         try:
                             suppl = Chem.SDMolSupplier(sdf_split)
                             mol = next(suppl) if suppl else None
                             
                             if mol is not None:
-                                # RDKit: Gera 3D com hidrogênios
                                 mol_3d = Chem.AddHs(mol)
                                 res_embed = AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG())
                                 
                                 if res_embed == 0: 
                                     AllChem.MMFFOptimizeMolecule(mol_3d)
                                     
-                                    # Sobrescreve o arquivo com a estrutura 3D minimizada
                                     writer = Chem.SDWriter(sdf_split)
                                     writer.write(mol_3d)
                                     writer.close()
                                     
-                                    # OpenBabel: Cargas Gasteiger e conversão PDBQT
                                     base_m2 = os.path.basename(sdf_split).replace(".sdf", "")
                                     final_pdbqt = f"Ligantes/{base_m2}.pdbqt"
                                     
@@ -439,7 +435,7 @@ with tab_ligante:
                     percentual = int(((idx + 1) / len(temp_paths)) * 100)
                     my_bar.progress(percentual, text=f"Processado arquivo de biblioteca {idx+1} de {len(temp_paths)}...")
                 
-                my_bar.empty() # Remove a barra ao concluir
+                my_bar.empty() 
                 qtd_gerados = len(glob.glob("Ligantes/*.pdbqt"))
                 
                 if qtd_gerados > 0:
@@ -556,7 +552,6 @@ with tab_vina:
         vina_config_name = st.text_input("Salvar job como:", value="config.txt")
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
-        
         max_cpus = multiprocessing.cpu_count()
         st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
 
@@ -674,13 +669,12 @@ with tab_executar:
             st.text_area("Saída Bruta do Algoritmo Termodinâmico:", value=st.session_state.vina_log_output, height=400)
 
 # ==========================================
-# ABA 7: Análise Químico-Estrutural
+# ABA 7: Análise Químico-Estrutural e Exportação
 # ==========================================
 with tab_visualizar:
-    st.header("7. Análise de Resultados e Síntese (Triplicata)")
+    st.header("7. Análise de Resultados e Exportação")
     
     st.divider()
-    
     st.subheader("📈 Tabela Termodinâmica Global")
 
     if st.session_state.vs_mode:
@@ -810,12 +804,7 @@ with tab_visualizar:
                                             lig_lines.append("HETATM" + l[6:17] + "UNL" + l[20:])
                                 complex_str = "".join(rec_lines + lig_lines + ["END\n"])
                                 with open(comp_out_path, "w") as f: f.write(complex_str)
-                        st.success(f"✅ Todos os complexos PDB foram salvos em: `{out_complexes_dir}`")
-
-            if st.session_state.get('complex_generated', False):
-                with col_vis1:
-                    with open(st.session_state.complex_file, "r") as f:
-                        st.download_button("⬇️ Baixar PDB do Complexo (Interativo)", data=f.read(), file_name=st.session_state.complex_file, mime="text/plain", type="primary")
+                        st.success(f"✅ Todos os complexos PDB foram salvos na pasta: `{out_complexes_dir}`")
 
             with col_vis2:
                 if st.session_state.get('complex_generated', False):
@@ -826,6 +815,44 @@ with tab_visualizar:
                     viewer_comp.setStyle({'model': 1}, {"stick": {'colorscheme': 'magentaCarbon', 'radius': 0.15}})
                     viewer_comp.zoomTo({'model': 1})
                     html(viewer_comp._make_html(), width=700, height=450)
+
+            # --- NOVO BLOCO: EXPORTAÇÃO COMPLETA DA TRIAGEM ---
+            st.divider()
+            st.markdown("### 📦 Exportação Completa de Dados (Download)")
+            st.info("Faça o download de um pacote ZIP contendo os arquivos de configuração, logs, e as pastas com as posições originais (.pdbqt) e os complexos 3D fundidos (.pdb).")
+            
+            # Criação do arquivo ZIP em memória RAM (não polui o servidor)
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                # 1. Adiciona a pasta de resultados brutos do Vina
+                if os.path.exists(st.session_state.vs_results_dir):
+                    for root, dirs, files in os.walk(st.session_state.vs_results_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.join(st.session_state.vs_results_dir, os.path.relpath(file_path, st.session_state.vs_results_dir))
+                            zip_file.write(file_path, arcname)
+                
+                # 2. Adiciona a pasta de PDBs sintetizados (se o usuário tiver gerado)
+                out_complexes_dir = f"{st.session_state.vs_results_dir}_ComplexosPDB"
+                if os.path.exists(out_complexes_dir):
+                    for root, dirs, files in os.walk(out_complexes_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.join(out_complexes_dir, os.path.relpath(file_path, out_complexes_dir))
+                            zip_file.write(file_path, arcname)
+                            
+                # 3. Opcional: Arquivo de Configuração
+                if os.path.exists("config.txt"):
+                    zip_file.write("config.txt", "config_utilizado.txt")
+            
+            st.download_button(
+                label="📥 Baixar Arquivo ZIP com Todos os Resultados",
+                data=buffer.getvalue(),
+                file_name=f"Resultados_HTVS_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
+                mime="application/zip",
+                type="primary",
+                use_container_width=True
+            )
 
     else:
         # TABELA E VISUALIZAÇÃO SINGLE
