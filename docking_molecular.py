@@ -6,8 +6,8 @@ import requests
 import re
 import glob
 import time
-import io             # <-- Novo: Para manipular bytes em memória
-import zipfile        # <-- Novo: Para criar o arquivo compactado
+import io
+import zipfile
 from datetime import datetime
 import numpy as np
 import multiprocessing
@@ -37,7 +37,7 @@ LOCK_FILE = "vina_execution.lock"
 def is_server_busy():
     """Verifica se o servidor está rodando Vina para outro usuário."""
     if os.path.exists(LOCK_FILE):
-        # Proteção Anti-Zumbi: Se o lock tem mais de 30 minutos, apaga (caso o app tenha travado antes)
+        # Proteção Anti-Zumbi: Se o lock tem mais de 30 minutos, apaga
         file_age = time.time() - os.path.getmtime(LOCK_FILE)
         if file_age > 1800: 
             os.remove(LOCK_FILE)
@@ -375,6 +375,7 @@ with tab_ligante:
                 os.makedirs("Ligantes_temp", exist_ok=True)
                 os.makedirs("Ligantes", exist_ok=True)
                 
+                # Limpeza de memória
                 for f in glob.glob("Ligantes_temp/*"): os.remove(f)
                 for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f)
                 
@@ -552,6 +553,7 @@ with tab_vina:
         vina_config_name = st.text_input("Salvar job como:", value="config.txt")
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
+        
         max_cpus = multiprocessing.cpu_count()
         st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
 
@@ -566,7 +568,7 @@ with tab_vina:
         with open(vina_config_name, "r") as f: st.code(f.read(), language="ini")
 
 # ==========================================
-# ABA 6: Execução do Docking Molecular (C/ Trava de Fila)
+# ABA 6: Execução do Docking Molecular (C/ Trava de Fila e Log em Tempo Real)
 # ==========================================
 with tab_executar:
     st.header("6. Simulação Termodinâmica em Triplicata")
@@ -590,7 +592,7 @@ with tab_executar:
                 st.error("⏳ **Servidor Ocupado:** Outro pesquisador está executando um cálculo termodinâmico no momento. Por favor, aguarde alguns minutos para não sobrecarregar a nuvem gratuita.")
             else:
                 try:
-                    lock_server() # Bloqueia o servidor
+                    lock_server()
                     
                     if not os.path.exists(vina_exe):
                         st.info("Adquirindo binários Vina (Linux)...")
@@ -599,18 +601,39 @@ with tab_executar:
                         os.chmod(vina_exe, 0o755)
                     
                     st.session_state.vs_results_dir = output_dir_input
-                    progress_bar = st.progress(0, text="Iniciando cálculos termodinâmicos...")
                     
                     with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes (Multicore)..."):
                         log_outputs = ""
+                        progress_bar = st.progress(0, text="Preparando cálculos...")
+                        log_placeholder = st.empty() # Placeholder para Streaming de texto
+                        
                         for rep in range(1, 4):
                             rep_dir = os.path.join(output_dir_input, f"rep{rep}")
                             os.makedirs(rep_dir, exist_ok=True)
                             
                             cmd_batch = f"./{vina_exe} --config {config_file_exec} --batch Ligantes/*.pdbqt --dir {rep_dir}"
-                            res_vs = subprocess.run(cmd_batch, shell=True, capture_output=True, text=True)
-                            log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vs.stdout
                             
+                            log_outputs += f"\n==================================================\n"
+                            log_outputs += f"--- INICIANDO LOTE HTVS: REPLICATA {rep} DE 3 ---\n"
+                            log_outputs += f"==================================================\n"
+                            log_placeholder.code(log_outputs, language="text")
+                            
+                            # Execução com Popen para ler a saída em tempo real
+                            process = subprocess.Popen(cmd_batch, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
+                            
+                            last_update = time.time()
+                            for line in iter(process.stdout.readline, ''):
+                                log_outputs += line
+                                # Atualiza a tela a cada 0.5s para não travar o navegador com requisições Websocket
+                                if time.time() - last_update > 0.5:
+                                    log_placeholder.code(log_outputs, language="text")
+                                    last_update = time.time()
+                            
+                            process.stdout.close()
+                            process.wait()
+                            
+                            # Atualiza a última parte do texto da replicata
+                            log_placeholder.code(log_outputs, language="text")
                             progress_bar.progress(int((rep / 3.0) * 100), text=f"Calculando Replicata {rep} de 3...")
                             
                         st.session_state.vina_log_output = log_outputs 
@@ -619,7 +642,7 @@ with tab_executar:
                 except Exception as e: 
                     st.error(f"Erro do sistema: {e}")
                 finally:
-                    unlock_server() # Libera o servidor mesmo se der erro
+                    unlock_server()
 
     else:
         # Modo Individual em Triplicata
@@ -636,21 +659,40 @@ with tab_executar:
                 st.error("⏳ **Servidor Ocupado:** Outro pesquisador está executando um cálculo termodinâmico no momento. Por favor, aguarde alguns minutos para não sobrecarregar a nuvem gratuita.")
             else:
                 try:
-                    lock_server() # Bloqueia o servidor
+                    lock_server() 
                     
                     if not os.path.exists(vina_exe):
                         r_vina = requests.get(f"https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/{vina_exe}")
                         with open(vina_exe, 'wb') as f: f.write(r_vina.content)
                         os.chmod(vina_exe, 0o755)
                     
-                    progress_bar = st.progress(0, text="Calculando energias de interação...")
-                    log_outputs = ""
-                    with st.spinner(f"Computando interações termodinâmicas usando {multiprocessing.cpu_count()} núcleos (3x vezes)..."):
+                    with st.spinner(f"Computando interações termodinâmicas usando {multiprocessing.cpu_count()} núcleos..."):
+                        log_outputs = ""
+                        progress_bar = st.progress(0, text="Iniciando motor Vina...")
+                        log_placeholder = st.empty() # Placeholder para Streaming de texto
+                        
                         for rep in range(1, 4):
                             out_rep = f"{output_pdbqt_base}_rep{rep}.pdbqt"
-                            res_vina = subprocess.run([f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep], capture_output=True, text=True)
-                            log_outputs += f"\n--- REPLICATA {rep} ---\n" + res_vina.stdout
+                            cmd = [f"./{vina_exe}", "--config", config_file_exec, "--out", out_rep]
                             
+                            log_outputs += f"\n==============================================\n"
+                            log_outputs += f"--- INICIANDO DOCKING: REPLICATA {rep} DE 3 ---\n"
+                            log_outputs += f"==============================================\n"
+                            log_placeholder.code(log_outputs, language="text")
+                            
+                            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
+                            
+                            last_update = time.time()
+                            for line in iter(process.stdout.readline, ''):
+                                log_outputs += line
+                                if time.time() - last_update > 0.5:
+                                    log_placeholder.code(log_outputs, language="text")
+                                    last_update = time.time()
+                            
+                            process.stdout.close()
+                            process.wait()
+                            
+                            log_placeholder.code(log_outputs, language="text")
                             progress_bar.progress(int((rep / 3.0) * 100), text=f"Replicata {rep} de 3 concluída...")
                         
                         progress_bar.empty()
@@ -660,12 +702,13 @@ with tab_executar:
                 except Exception as e: 
                     st.error(f"Erro: {e}")
                 finally:
-                    unlock_server() # Libera o servidor mesmo se der erro
+                    unlock_server()
                 
-    # --- VISUALIZAÇÃO DE LOG PERSISTENTE ---
+    # --- VISUALIZAÇÃO DE LOG PERSISTENTE APÓS EXECUÇÃO ---
     if st.session_state.vina_log_output:
         st.divider()
-        if st.checkbox("Exibir Log de Execução do AutoDock Vina (Terminal)"):
+        st.caption("Log salvo da última execução concluída:")
+        if st.checkbox("Exibir Log de Execução Permanente (Terminal)"):
             st.text_area("Saída Bruta do Algoritmo Termodinâmico:", value=st.session_state.vina_log_output, height=400)
 
 # ==========================================
@@ -713,7 +756,6 @@ with tab_visualizar:
                     df_results = pd.DataFrame(data_results).sort_values(by="Média (kcal/mol)")
                     st.dataframe(df_results, use_container_width=True, hide_index=True)
                     
-                    # --- GRÁFICO INTERATIVO DE AFINIDADE E DESVIO PADRÃO ---
                     st.markdown("### 📊 Gráfico de Afinidade Termodinâmica")
                     fig = px.bar(df_results, x="Ligante", y="Média (kcal/mol)", error_y="Desvio Padrão", 
                                  title="Energia Livre de Gibbs (ΔG) por Ligante",
@@ -816,15 +858,13 @@ with tab_visualizar:
                     viewer_comp.zoomTo({'model': 1})
                     html(viewer_comp._make_html(), width=700, height=450)
 
-            # --- NOVO BLOCO: EXPORTAÇÃO COMPLETA DA TRIAGEM ---
+            # --- EXPORTAÇÃO COMPLETA DA TRIAGEM EM LOTE ---
             st.divider()
             st.markdown("### 📦 Exportação Completa de Dados (Download)")
             st.info("Faça o download de um pacote ZIP contendo os arquivos de configuração, logs, e as pastas com as posições originais (.pdbqt) e os complexos 3D fundidos (.pdb).")
             
-            # Criação do arquivo ZIP em memória RAM (não polui o servidor)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                # 1. Adiciona a pasta de resultados brutos do Vina
                 if os.path.exists(st.session_state.vs_results_dir):
                     for root, dirs, files in os.walk(st.session_state.vs_results_dir):
                         for file in files:
@@ -832,7 +872,6 @@ with tab_visualizar:
                             arcname = os.path.join(st.session_state.vs_results_dir, os.path.relpath(file_path, st.session_state.vs_results_dir))
                             zip_file.write(file_path, arcname)
                 
-                # 2. Adiciona a pasta de PDBs sintetizados (se o usuário tiver gerado)
                 out_complexes_dir = f"{st.session_state.vs_results_dir}_ComplexosPDB"
                 if os.path.exists(out_complexes_dir):
                     for root, dirs, files in os.walk(out_complexes_dir):
@@ -841,7 +880,6 @@ with tab_visualizar:
                             arcname = os.path.join(out_complexes_dir, os.path.relpath(file_path, out_complexes_dir))
                             zip_file.write(file_path, arcname)
                             
-                # 3. Opcional: Arquivo de Configuração
                 if os.path.exists("config.txt"):
                     zip_file.write("config.txt", "config_utilizado.txt")
             
@@ -877,7 +915,6 @@ with tab_visualizar:
                 }])
                 st.dataframe(df_single, use_container_width=True, hide_index=True)
                 
-                # --- GRÁFICO INTERATIVO DE AFINIDADE E DESVIO PADRÃO (SINGLE) ---
                 st.markdown("### 📊 Gráfico de Afinidade Termodinâmica")
                 fig = px.bar(df_single, x="Ligante (Alvo Único)", y="Média (kcal/mol)", error_y="Desvio Padrão", 
                              title="Energia Livre de Gibbs (ΔG) do Complexo",
