@@ -104,9 +104,9 @@ st.set_page_config(page_title="Docking Molecular - FCF/UFAM", layout="wide", ini
 # ==========================================
 with st.sidebar:
     try:
-        st.image("logo_ufam.jpg", use_container_width=True)
+        st.image("fundacao-universidade-do-amazonas.png", use_container_width=True)
     except Exception:
-        st.warning("Logo da UFAM ('logo_ufam.jpg') não encontrado no diretório.")
+        st.warning("Logo da UFAM ('fundacao-universidade-do-amazonas.png') não encontrado no diretório.")
     
     st.markdown("---")
     st.markdown("### Autoria do Projeto")
@@ -1055,3 +1055,4 @@ with tab_referencias:
     * **PDBFixer / OpenMM:** Eastman, P., et al. (2017). OpenMM 7: Rapid development of high performance algorithms for molecular dynamics. *PLoS computational biology*, 13(7), e1005659.
     * **Biopython:** Cock, P. J., et al. (2009). Biopython: freely available Python tools for computational molecular biology and bioinformatics. *Bioinformatics*, 25(11), 1422-1423.
     """)
+
