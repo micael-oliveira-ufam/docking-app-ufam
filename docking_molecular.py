@@ -632,7 +632,7 @@ with tab_vina:
     with col_conf2:
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
         
-        max_cpus = multiprocessing.cpu_count()
+        max_cpus = 0
         st.success(f"⚡ Autodetecção Vina: O algoritmo alocará automaticamente os {max_cpus} núcleos lógicos desta máquina.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
