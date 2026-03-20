@@ -13,7 +13,7 @@ import numpy as np
 import multiprocessing
 
 # ==========================================
-# CONFIGURAÇÃO DA PÁGINA E TEMA MODERNO
+# CONFIGURAÇÃO DA PÁGINA E TEMA ALTO CONTRASTE
 # ==========================================
 st.set_page_config(
     page_title="Laboratório Virtual de Docking | FCF/UFAM", 
@@ -22,7 +22,7 @@ st.set_page_config(
     page_icon="🧬"
 )
 
-# Injeção de CSS para UX moderno e fundo branco puro
+# Injeção de CSS para UX moderno, fundo branco puro e texto PRETO
 st.markdown("""
 <style>
     /* Estilo Global e Fundo Branco */
@@ -30,122 +30,97 @@ st.markdown("""
         background-color: #FFFFFF;
     }
     
-    /* Configuração de Fontes e Espaçamento */
-    html, body, [class*="css"]  {
+    /* Configuração de Fontes e Espaçamento (Forçando Preto) */
+    html, body, [class*="css"], .stMarkdown, p, span, div, label {
         font-family: 'Inter', sans-serif;
-        color: #202124;
+        color: #000000 !important;
     }
     
-    /* Títulos e Subtítulos Modernos */
-    h1 {
-        color: #1E88E5;
+    /* Títulos e Subtítulos Modernos - Tudo Preto */
+    h1, h2, h3, h4, h5, h6 {
+        color: #000000 !important;
         font-weight: 800;
-        margin-bottom: 0.5rem;
     }
-    h2, h3 {
-        color: #3C4043;
-        font-weight: 600;
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-    }
+    h1 { margin-bottom: 0.5rem; }
+    h2, h3 { margin-top: 1rem; margin-bottom: 0.5rem; }
     
     /* Estilização da Sidebar (Painel Lateral) */
     [data-testid="stSidebar"] {
         background-color: #F8F9FA;
-        border-right: 1px solid #E0E0E0;
+        border-right: 2px solid #000000;
     }
-    [data-testid="stSidebar"] h3 {
-        color: #1E88E5;
-        font-size: 1.1rem;
-        margin-top: 1.5rem;
-    }
-    [data-testid="stSidebar"] .stMarkdown {
-        font-size: 0.9rem;
-        color: #5F6368;
+    [data-testid="stSidebar"] * {
+        color: #000000 !important;
     }
     
-    /* Modernização de Cards (Containers) */
-    div[data-testid="stVerticalBlock"] > div:has(div[class*="stAlert"]),
-    div[data-testid="stVerticalBlock"] > div:has(div[class*="stBlock"]) {
-        # background-color: #FFFFFF;
-        # border-radius: 12px;
-        # padding: 1.5rem;
-        # border: 1px solid #E0E0E0;
-        # box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        # margin-bottom: 1rem;
-    }
-    
-    /* Botões Modernos */
+    /* Botões Modernos de Alto Contraste */
     .stButton > button {
         border-radius: 8px;
-        font-weight: 600;
+        font-weight: 700;
         text-transform: none;
         transition: all 0.2s;
     }
     .stButton > button:hover {
         transform: translateY(-1px);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
     }
     .stButton > button[kind="primary"] {
-        background-color: #1E88E5;
-        border: none;
+        background-color: #000000 !important;
+        color: #FFFFFF !important;
+        border: 2px solid #000000 !important;
     }
     .stButton > button[kind="secondary"] {
-        background-color: #FFFFFF;
-        color: #1E88E5;
-        border: 1px solid #E0E0E0;
-    }
-    .stButton > button[kind="secondary"]:hover {
-        background-color: #F8F9FA;
-        border: 1px solid #1E88E5;
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border: 2px solid #000000 !important;
     }
 
-    /* Inputs Modernos */
+    /* Inputs Modernos com Bordas Pretas */
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input,
     .stTextArea > div > div > textarea,
     .stSelectbox > div > div > div {
         border-radius: 8px;
-        border: 1px solid #E0E0E0;
+        border: 1px solid #000000 !important;
         background-color: #FFFFFF;
+        color: #000000 !important;
     }
     .stTextInput > div > div > input:focus,
     .stTextArea > div > div > textarea:focus {
-        border-color: #1E88E5;
-        box-shadow: 0 0 0 1px #1E88E5;
+        border-color: #000000 !important;
+        box-shadow: 0 0 0 2px #000000 !important;
     }
     
-    /* Estilo das Abas */
+    /* Estilo das Abas de Alto Contraste */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
         background-color: #F8F9FA;
         padding: 6px;
         border-radius: 10px;
-        border: 1px solid #E0E0E0;
+        border: 1px solid #000000 !important;
     }
     .stTabs [data-baseweb="tab"] {
         height: 40px;
         white-space: pre;
         background-color: transparent;
         border-radius: 8px;
-        color: #5F6368;
-        font-weight: 500;
+        color: #000000 !important;
+        font-weight: 600;
         border: none;
         padding: 0px 16px;
     }
     .stTabs [data-baseweb="tab"]:hover {
-        color: #1E88E5;
-        background-color: rgba(30, 136, 229, 0.05);
+        background-color: rgba(0, 0, 0, 0.1);
     }
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background-color: #FFFFFF;
-        color: #1E88E5;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background-color: #000000 !important;
+        color: #FFFFFF !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
 
     /* Gráficos e Tabelas */
     [data-testid="stDataFrame"] {
-        border: 1px solid #E0E0E0;
+        border: 1px solid #000000 !important;
         border-radius: 8px;
     }
 </style>
@@ -258,11 +233,11 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Desenvolvido para ensino e pesquisa em Química Medicinal Computacional.")
 
-# Cabeçalho Principal Estilizado
+# Cabeçalho Principal Estilizado e em Preto
 st.markdown("""
-<div style="background-color: #FFFFFF; padding: 1.5rem 0rem; border-bottom: 1px solid #E0E0E0; margin-bottom: 2rem;">
-    <h1 style="margin: 0; font-size: 2.2rem;">🧬 Laboratório Virtual: Docking Molecular e Triagem</h1>
-    <p style="color: #5F6368; font-size: 1.1rem; margin-top: 0.5rem; margin-bottom: 0;">Plataforma acadêmica para ensino de <b>Química Medicinal Computacional</b> e <b>Planejamento de Fármacos</b>.</p>
+<div style="background-color: #FFFFFF; padding: 1.5rem 0rem; border-bottom: 2px solid #000000; margin-bottom: 2rem;">
+    <h1 style="margin: 0; font-size: 2.2rem; color: #000000 !important;">🧬 Laboratório Virtual: Docking Molecular e Triagem</h1>
+    <p style="color: #000000 !important; font-size: 1.1rem; margin-top: 0.5rem; margin-bottom: 0;">Plataforma acadêmica para ensino de <b>Química Medicinal Computacional</b> e <b>Planejamento de Fármacos</b>.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -618,7 +593,6 @@ with tab_gridbox:
                                     match_s = re.search(r'W\s+([-\d.]+)\s+H\s+([-\d.]+)\s+D\s+([-\d.]+)', output)
                                     if match_c and match_s:
                                         st.session_state.cx, st.session_state.cy, st.session_state.cz = map(float, match_c.groups())
-                                        # Blind docking geralmente precisa de uma caixa maior que os limites exatos
                                         st.session_state.sx, st.session_state.sy, st.session_state.sz = map(lambda x: float(x)+2.0, match_s.groups())
                                         st.success("Caixa global calculada!"); time.sleep(1); st.rerun() 
                                 else: st.error("Erro interno no LaBOX.")
@@ -647,7 +621,7 @@ with tab_gridbox:
                         viewer = py3Dmol.view(width=500, height=400)
                         viewer.addModel(f.read(), "pdb")
                         viewer.setStyle({"cartoon": {'color':'lightgray'}})
-                        viewer.addBox({'center': {'x': cx, 'y': cy, 'z': cz}, 'dimensions': {'w': sx, 'h': sy, 'd': sz}, 'color': '#1E88E5', 'wireframe': True})
+                        viewer.addBox({'center': {'x': cx, 'y': cy, 'z': cz}, 'dimensions': {'w': sx, 'h': sy, 'd': sz}, 'color': '#000000', 'wireframe': True})
                         viewer.zoomTo()
                         html(viewer._make_html(), width=500, height=400)
 
@@ -666,9 +640,13 @@ with tab_vina_conf:
             vina_config_name = st.text_input("Nome do arquivo config:", value="config.txt")
         
         with col_conf2:
-            vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24, help="Padrão Vina é 8. Para IC/Publicação, 24-48 é recomendado.")
-            max_cpus = multiprocessing.cpu_count()
-            st.success(f"⚡ Autodetecção Vina: Alocação automática de {max_cpus} núcleos lógicos.")
+            vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24, help="Padrão Vina é 8. Para pesquisa, 24-48 é recomendado.")
+            vina_cpus = st.number_input("Núcleos de Processamento (CPU):", min_value=0, value=0, help="0 = O Vina gerencia nativamente. Se a máquina travar, altere para 1 ou 2.")
+            
+            if vina_cpus == 0:
+                st.info("⚡ Autodetecção Vina (CPU=0): O algoritmo alocará os recursos de forma nativa.")
+            else:
+                st.warning(f"🔋 CPU Limitada: O Vina usará estritamente {vina_cpus} núcleo(s).")
 
         btn_gen_conf = st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary", use_container_width=True)
 
@@ -677,7 +655,7 @@ with tab_vina_conf:
             if not st.session_state.vs_mode: c_content += f"ligand = {vina_ligante}\n"
             c_content += f"\ncenter_x = {st.session_state.cx}\ncenter_y = {st.session_state.cy}\ncenter_z = {st.session_state.cz}\n"
             c_content += f"size_x = {st.session_state.sx}\nsize_y = {st.session_state.sy}\nsize_z = {st.session_state.sz}\n"
-            c_content += f"\nexhaustiveness = {vina_exhaustiveness}\ncpu = {max_cpus}\n"
+            c_content += f"\nexhaustiveness = {vina_exhaustiveness}\ncpu = {vina_cpus}\n"
             with open(vina_config_name, "w") as f: f.write(c_content)
             st.success(f"Arquivo config pronto."); st.code(c_content, language="ini")
 
@@ -853,7 +831,7 @@ with tab_visualizar:
                         for root, _, files in os.walk(st.session_state.vs_results_dir):
                             for file in files: zip_f.write(os.path.join(root, file), os.path.join("PDBQT_Poses", file))
                     if os.path.exists("config.txt"): zip_f.write("config.txt", "config_utilizado.txt")
-                st.download_button("📥 Baixar ZIP com Todos os Resultados", data=buf.getvalue(), file_name=f"Resultados_HTVS_{st.session_state.vs_results_dir}.zip", mime="application/zip", type="primary", use_container_width=True)
+                st.download_button("📥 Baixar ZIP com Todos Resultados", data=buf.getvalue(), file_name=f"Resultados_HTVS_{st.session_state.vs_results_dir}.zip", mime="application/zip", type="primary", use_container_width=True)
 
     else: # Modo Único
         base_n = st.session_state.get('single_result_base', '')
