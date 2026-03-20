@@ -246,13 +246,14 @@ with tab_ligante:
         A geração 3D e o relaxamento do campo de força (MMFF94) da molécula são executados via `RDKit (ETKDG)`, conferindo otimização em frações de segundo para nuvem.
         
         ### Triagem Virtual Sequencial (Virtual Screening)
-        O algoritmo HTVS processa arquivos enviados de forma sequencial (uma molécula por vez), extraindo as matrizes via OpenBabel, gerando a conformação geométrica nativa 3D com RDKit, e finalmente convertendo para PDBQT, garantindo extrema estabilidade de memória em ambientes Cloud.
+        O algoritmo HTVS processa arquivos enviados de forma sequencial, extraindo as matrizes via OpenBabel, gerando a conformação geométrica nativa 3D com RDKit, e convertendo para PDBQT.
         """)
 
     modo_preparacao = st.radio("Selecione a Estratégia de Processamento:", [
         "🔬 Triagem Simples: Molécula Única (SMILES/Nome)", 
         "♻️ Validação do Método: Re-Docking (Extrair Fármaco do PDB)",
-        "🚀 Triagem Virtual Automática: Lote de Ligantes (Upload .sdf/.mol2/.pdb)"
+        "🚀 Triagem Automática (Upload): Lote de Ligantes (.sdf/.mol2/.pdb)",
+        "📝 Triagem Automática (SMILES): Lista de Códigos (SMILES)"
     ])
 
     if "Triagem Simples" in modo_preparacao:
@@ -361,11 +362,88 @@ with tab_ligante:
                     st.success(f"Matriz de coordenadas extraída com sucesso! Salvo como: {ext_pdbqt}")
             else:
                 st.warning("Nenhum ligante orgânico detectado.")
-    
+                
+    elif "SMILES" in modo_preparacao:
+        st.session_state.redocking_mode = False
+        st.session_state.vs_mode = True
+        st.info("📝 Módulo de Processamento em Lote a partir de códigos SMILES.")
+        
+        texto_smiles = st.text_area("Insira os códigos SMILES (um por linha). Formato Opcional: SMILES,Nome_da_Molecula", 
+                                    placeholder="CC(=O)OC1=CC=CC=C1C(=O)O,Aspirina\nCN1C=NC2=C1C(=O)N(C(=O)N2C)C,Cafeina", height=200)
+        
+        arquivo_smiles = st.file_uploader("Ou faça upload de um arquivo .txt ou .csv", type=["txt", "csv"])
+        
+        if st.button("Processar SMILES e Converter para PDBQT", type="primary"):
+            conteudo = ""
+            if arquivo_smiles is not None:
+                conteudo = arquivo_smiles.getvalue().decode("utf-8")
+            elif texto_smiles.strip():
+                conteudo = texto_smiles
+                
+            if conteudo.strip():
+                os.makedirs("Ligantes", exist_ok=True)
+                for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f) # Limpeza
+                
+                linhas = [l for l in conteudo.split('\n') if l.strip()]
+                total = len(linhas)
+                total_sucesso = 0
+                total_falha = 0
+                
+                progress_text = "Gerando estruturas 3D e topologia iterativamente..."
+                my_bar = st.progress(0, text=progress_text)
+                
+                for idx, linha in enumerate(linhas):
+                    partes = linha.split(',')
+                    smi = partes[0].strip()
+                    nome = sanitize_filename(partes[1].strip()) if len(partes) > 1 else f"ligante_{idx+1}"
+                    
+                    if smi:
+                        try:
+                            mol = Chem.MolFromSmiles(smi)
+                            if mol:
+                                mol_3d = Chem.AddHs(mol)
+                                res_embed = AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG())
+                                if res_embed == 0:
+                                    AllChem.MMFFOptimizeMolecule(mol_3d)
+                                    
+                                    sdf_temp = f"Ligantes/{nome}.sdf"
+                                    pdbqt_final = f"Ligantes/{nome}.pdbqt"
+                                    
+                                    writer = Chem.SDWriter(sdf_temp)
+                                    writer.write(mol_3d)
+                                    writer.close()
+                                    
+                                    subprocess.run(["obabel", "-isdf", sdf_temp, "-opdbqt", "-O", pdbqt_final, "-p", "7.4", "--partialcharge", "gasteiger"], capture_output=True)
+                                    
+                                    if os.path.exists(pdbqt_final):
+                                        total_sucesso += 1
+                                        os.remove(sdf_temp) 
+                                    else:
+                                        total_falha += 1
+                                else:
+                                    total_falha += 1
+                            else:
+                                total_falha += 1
+                        except Exception:
+                            total_falha += 1
+                            
+                    my_bar.progress(int(((idx + 1) / total) * 100), text=f"Processando {idx+1} de {total} (Sucesso: {total_sucesso} | Falha: {total_falha})")
+                
+                my_bar.empty()
+                if total_sucesso > 0:
+                    st.success(f"🎉 Triagem Virtual preparada! {total_sucesso} moléculas 3D otimizadas e formatadas como .pdbqt.")
+                    if total_falha > 0:
+                        st.warning(f"⚠️ Atenção: {total_falha} molécula(s) descartadas devido a SMILES inválido ou distorção topológica 3D.")
+                    st.session_state.lig_final = "Múltiplos Ligantes (Modo Lote Ativado)"
+                else:
+                    st.error("Nenhuma molécula pôde ser convertida. Revise os códigos fornecidos.")
+            else:
+                st.warning("Forneça ao menos um código SMILES para prosseguir.")
+
     else:
         st.session_state.redocking_mode = False
         st.session_state.vs_mode = True
-        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) - Sequencial Otimizado")
+        st.info("📦 Módulo de High-Throughput Virtual Screening (HTVS) - Arquivos Estruturais")
         st.write("Faça o upload de múltiplos arquivos individuais OU de um único arquivo contendo várias moléculas (ex: biblioteca.sdf).")
         
         uploaded_files = st.file_uploader("Arquivos de Biblioteca de Fármacos", type=['sdf', 'mol2', 'pdb'], accept_multiple_files=True)
@@ -1055,4 +1133,3 @@ with tab_referencias:
     * **PDBFixer / OpenMM:** Eastman, P., et al. (2017). OpenMM 7: Rapid development of high performance algorithms for molecular dynamics. *PLoS computational biology*, 13(7), e1005659.
     * **Biopython:** Cock, P. J., et al. (2009). Biopython: freely available Python tools for computational molecular biology and bioinformatics. *Bioinformatics*, 25(11), 1422-1423.
     """)
-
