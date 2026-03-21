@@ -37,6 +37,7 @@ LOCK_FILE = "vina_execution.lock"
 def is_server_busy():
     """Verifica se o servidor está rodando Vina para outro usuário."""
     if os.path.exists(LOCK_FILE):
+        # Proteção Anti-Zumbi: Se o lock tem mais de 30 minutos, apaga
         file_age = time.time() - os.path.getmtime(LOCK_FILE)
         if file_age > 1800: 
             os.remove(LOCK_FILE)
@@ -96,20 +97,12 @@ def get_vina_affinity(file_path):
     return np.nan
 
 # Configuração da página
-st.set_page_config(page_title="Docking Molecular - FCF/UFAM", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="BioDockUfam", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# BARRA LATERAL (AUTORIA E LOGO)
+# BARRA LATERAL (AUTORIA)
 # ==========================================
 with st.sidebar:
-    # Solução para nuvem: Caminho absoluto apontando para o diretório raiz do script no Linux
-    logo_path = os.path.join(os.path.dirname(__file__), "logo_ufam.jpg")
-    if os.path.exists(logo_path):
-        st.image(logo_path, use_container_width=True)
-    else:
-        st.warning("⚠️ Logo 'logo_ufam.jpg' não encontrada no diretório raiz do GitHub.")
-    
-    st.markdown("---")
     st.markdown("### Autoria do Projeto")
     st.markdown("**Micael Davi Lima de Oliveira**")
     st.markdown("*Iniciação Científica*")
@@ -119,7 +112,7 @@ with st.sidebar:
     st.caption("Desenvolvido para ensino e pesquisa em Química Medicinal Computacional.")
 
 # Cabeçalho Principal
-st.title("🧬 Laboratório Virtual: Docking Molecular e Triagem")
+st.title("🧬 BioDockUfam: Uma ferramenta automatizada de docking molecular")
 st.markdown("Plataforma acadêmica para ensino de **Química Medicinal Computacional** e **Planejamento de Fármacos**.")
 
 # Inicialização das variáveis de memória do Streamlit
@@ -632,10 +625,8 @@ with tab_vina:
         vina_config_name = st.text_input("Salvar job como:", value="config.txt")
         
     with col_conf2:
-        # Exaustiveness reduzida por padrão para evitar Timeouts na nuvem
         vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=8)
         
-        # CPU estritamente limitada a 1 por padrão para evitar OOM Killer do Streamlit
         vina_cpus = st.number_input(
             "Núcleos de Processamento (CPU):", 
             min_value=1, 
