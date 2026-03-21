@@ -37,7 +37,6 @@ LOCK_FILE = "vina_execution.lock"
 def is_server_busy():
     """Verifica se o servidor está rodando Vina para outro usuário."""
     if os.path.exists(LOCK_FILE):
-        # Proteção Anti-Zumbi: Se o lock tem mais de 30 minutos, apaga
         file_age = time.time() - os.path.getmtime(LOCK_FILE)
         if file_age > 1800: 
             os.remove(LOCK_FILE)
@@ -100,17 +99,15 @@ def get_vina_affinity(file_path):
 st.set_page_config(page_title="Docking Molecular - FCF/UFAM", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# BARRA LATERAL (AUTORIA E LOGO VIA LINK)
+# BARRA LATERAL (AUTORIA E LOGO)
 # ==========================================
 with st.sidebar:
-    # URL da logo fornecida
-    UFAM_LOGO_URL = "https://digital.ufam.edu.br/assets/img/ufam_logo.png"
-    
-    try:
-        # Carregando a logo diretamente do link
-        st.image(UFAM_LOGO_URL, use_container_width=True)
-    except Exception:
-        st.warning(f"Não foi possível carregar a logo do link: {UFAM_LOGO_URL}")
+    # Solução para nuvem: Caminho absoluto apontando para o diretório raiz do script no Linux
+    logo_path = os.path.join(os.path.dirname(__file__), "logo_ufam.jpg")
+    if os.path.exists(logo_path):
+        st.image(logo_path, use_container_width=True)
+    else:
+        st.warning("⚠️ Logo 'logo_ufam.jpg' não encontrada no diretório raiz do GitHub.")
     
     st.markdown("---")
     st.markdown("### Autoria do Projeto")
@@ -143,10 +140,11 @@ if 'extracted_lig_pdb' not in st.session_state: st.session_state.extracted_lig_p
 if 'vs_mode' not in st.session_state: st.session_state.vs_mode = False
 if 'vs_results_dir' not in st.session_state: st.session_state.vs_results_dir = ""
 if 'vina_log_output' not in st.session_state: st.session_state.vina_log_output = "" 
+if 'sdf_ligand_generated' not in st.session_state: st.session_state.sdf_ligand_generated = ""
 
 # Abas
 tab_install, tab_receptor, tab_ligante, tab_gridbox, tab_vina, tab_executar, tab_visualizar, tab_referencias = st.tabs([
-    "🛠️ 1. Ambiente", "🧬 2. Receptor", "💊 3. Ligante", "📦 4. Grid Box", "⚙️ 5. Vina Config", "🚀 6. Docking (Triplicata)", "👁️ 7. Análise de Resultados", "📚 8. Referências"
+    "🛠️ 1. Ambiente", "🧬 2. Receptor", "💊 3. Ligante", "📦 4. Grid Box", "⚙️ 5. Vina Config", "🚀 6. Docking", "👁️ 7. Análise de Resultados", "📚 8. Referências"
 ])
 
 # ==========================================
@@ -250,7 +248,7 @@ with tab_ligante:
         A geração 3D e o relaxamento do campo de força (MMFF94) da molécula são executados via `RDKit (ETKDG)`, conferindo otimização em frações de segundo para nuvem.
         
         ### Triagem Virtual Sequencial (Virtual Screening)
-        O algoritmo HTVS processa arquivos enviados de forma sequencial, extraindo as matrizes via OpenBabel, gerando a conformação geométrica nativa 3D com RDKit, e finalmente convertendo para PDBQT.
+        O algoritmo HTVS processa arquivos enviados de forma sequencial, extraindo as matrizes via OpenBabel, gerando a conformação geométrica nativa 3D com RDKit, e convertendo para PDBQT.
         """)
 
     modo_preparacao = st.radio("Selecione a Estratégia de Processamento:", [
@@ -386,7 +384,7 @@ with tab_ligante:
                 
             if conteudo.strip():
                 os.makedirs("Ligantes", exist_ok=True)
-                for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f) # Limpeza
+                for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f) 
                 
                 linhas = [l for l in conteudo.split('\n') if l.strip()]
                 total = len(linhas)
@@ -457,7 +455,6 @@ with tab_ligante:
                 os.makedirs("Ligantes_temp", exist_ok=True)
                 os.makedirs("Ligantes", exist_ok=True)
                 
-                # Limpeza de memória
                 for f in glob.glob("Ligantes_temp/*"): os.remove(f)
                 for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f)
                 
@@ -635,19 +632,18 @@ with tab_vina:
         vina_config_name = st.text_input("Salvar job como:", value="config.txt")
         
     with col_conf2:
-        vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=24)
+        # Exaustiveness reduzida por padrão para evitar Timeouts na nuvem
+        vina_exhaustiveness = st.number_input("Poder Computacional (Exhaustiveness):", min_value=1, value=8)
         
+        # CPU estritamente limitada a 1 por padrão para evitar OOM Killer do Streamlit
         vina_cpus = st.number_input(
             "Núcleos de Processamento (CPU):", 
-            min_value=0, 
-            value=0, 
-            help="0 = O Vina gerencia nativamente (pode usar 100%). Para evitar travamentos, limite definindo como 1, 2, ou a metade dos núcleos do seu PC."
+            min_value=1, 
+            value=1, 
+            help="Na nuvem gratuita do Streamlit, mantenha em 1 para evitar travamentos por falta de memória (OOM Killer)."
         )
         
-        if vina_cpus == 0:
-            st.info("⚡ Autodetecção Vina (CPU=0): O algoritmo alocará os recursos de forma nativa.")
-        else:
-            st.warning(f"🔋 CPU Limitada: O Vina usará estritamente {vina_cpus} núcleo(s), preservando o restante da sua máquina.")
+        st.warning(f"🔋 Nuvem Segura: O Vina usará estritamente {vina_cpus} núcleo(s) para preservar o servidor.")
 
     if st.button("Gerar Ordem de Cálculo 'config.txt'", type="primary"):
         if st.session_state.vs_mode:
@@ -694,7 +690,7 @@ with tab_executar:
                     
                     st.session_state.vs_results_dir = output_dir_input
                     
-                    with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes..."):
+                    with st.spinner(f"Rodando biblioteca de compostos em 3 corridas independentes na nuvem..."):
                         log_outputs = ""
                         progress_bar = st.progress(0, text="Preparando cálculos...")
                         log_placeholder = st.empty() 
@@ -755,7 +751,7 @@ with tab_executar:
                         with open(vina_exe, 'wb') as f: f.write(r_vina.content)
                         os.chmod(vina_exe, 0o755)
                     
-                    with st.spinner(f"Computando interações termodinâmicas..."):
+                    with st.spinner(f"Computando interações termodinâmicas com controle de memória..."):
                         log_outputs = ""
                         progress_bar = st.progress(0, text="Iniciando motor Vina...")
                         log_placeholder = st.empty() 
@@ -861,7 +857,7 @@ with tab_visualizar:
             # VISUALIZAÇÃO E SÍNTESE HTVS
             col_vis1, col_vis2 = st.columns([1, 2])
             with col_vis1:
-                st.markdown("**Síntese de PDB Interativo**")
+                st.markdown("**Síntese de PDB Interativo e SDF**")
                 
                 all_poses = glob.glob(os.path.join(st.session_state.vs_results_dir, "rep*", "*.pdbqt"))
                 opcoes_poses = [f"{os.path.basename(os.path.dirname(p))}/{os.path.basename(p)}" for p in all_poses]
@@ -881,11 +877,14 @@ with tab_visualizar:
                                     if linha.startswith("ENDMDL") and in_model_1: break
                             
                             with open("melhor_pose.pdbqt", "w") as f: f.writelines(best_pose_lines)
+                            
+                            # Solução Ligações Duplas: Gerar PDB (para complexo 3DMol) e SDF (para download profissional)
                             subprocess.run(["obabel", "-ipdbqt", "melhor_pose.pdbqt", "-opdb", "-O", "melhor_pose.pdb"])
+                            subprocess.run(["obabel", "-ipdbqt", "melhor_pose.pdbqt", "-osdf", "-O", "melhor_pose.sdf"])
                             
                             with open(st.session_state.rec_pdb_final, 'r') as f: rec_lines = [l for l in f.readlines() if not l.startswith("END")]
                             
-                            if os.path.exists("melhor_pose.pdb"):
+                            if os.path.exists("melhor_pose.pdb") and os.path.exists("melhor_pose.sdf"):
                                 lig_lines = []
                                 with open("melhor_pose.pdb", 'r') as f:
                                     for l in f.readlines():
@@ -897,24 +896,32 @@ with tab_visualizar:
                                 
                                 nome_comp = selected_pose_rel.replace('/', '_').replace('.pdbqt', '').replace('_out', '')
                                 temp_complex = f"complexo_{nome_comp}.pdb"
+                                temp_sdf = f"ligante_{nome_comp}.sdf"
+                                
                                 with open(temp_complex, "w") as f: f.write(complex_str)
+                                os.rename("melhor_pose.sdf", temp_sdf)
                                 
                                 st.session_state.complex_generated = True
                                 st.session_state.complex_file = temp_complex
+                                st.session_state.sdf_ligand_generated = temp_sdf
                                 st.session_state.rec_str = "".join(rec_lines)
                                 st.session_state.lig_str = "".join(lig_lines)
                 
                 st.write("---")
                 st.markdown("**Pós-Processamento em Lote**")
-                if st.button("Sintetizar PDB da Replicata 1 para TODOS os Ligantes"):
+                if st.button("Sintetizar Replicata 1 para TODOS os Ligantes"):
                     out_complexes_dir = f"{st.session_state.vs_results_dir}_ComplexosPDB"
+                    out_sdf_dir = f"{st.session_state.vs_results_dir}_LigantesSDF"
                     os.makedirs(out_complexes_dir, exist_ok=True)
-                    with st.spinner("Criando complexos PDB baseados na Rep 1..."):
+                    os.makedirs(out_sdf_dir, exist_ok=True)
+                    
+                    with st.spinner("Criando complexos PDB e preservando ligantes em SDF..."):
                         with open(st.session_state.rec_pdb_final, 'r') as f: rec_lines = [l for l in f.readlines() if not l.startswith("END")]
                         
                         for p_file in ligand_files:
                             clean_name = os.path.basename(p_file).replace('.pdbqt', '').replace('_out', '')
                             comp_out_path = os.path.join(out_complexes_dir, f"complexo_{clean_name}_rep1.pdb")
+                            sdf_out_path = os.path.join(out_sdf_dir, f"ligante_{clean_name}_rep1.sdf")
                             
                             best_pose = []
                             in_model_1 = False
@@ -925,7 +932,10 @@ with tab_visualizar:
                                     if line.startswith("ENDMDL") and in_model_1: break
                             
                             with open("temp_vs_pose.pdbqt", "w") as f: f.writelines(best_pose)
+                            
+                            # Gera ambos os formatos para o lote
                             subprocess.run(["obabel", "-ipdbqt", "temp_vs_pose.pdbqt", "-opdb", "-O", "temp_vs_pose.pdb"])
+                            subprocess.run(["obabel", "-ipdbqt", "temp_vs_pose.pdbqt", "-osdf", "-O", sdf_out_path])
                             
                             if os.path.exists("temp_vs_pose.pdb"):
                                 lig_lines = []
@@ -935,10 +945,15 @@ with tab_visualizar:
                                             lig_lines.append("HETATM" + l[6:17] + "UNL" + l[20:])
                                 complex_str = "".join(rec_lines + lig_lines + ["END\n"])
                                 with open(comp_out_path, "w") as f: f.write(complex_str)
-                        st.success(f"✅ Todos os complexos PDB foram salvos na pasta: `{out_complexes_dir}`")
+                                
+                        st.success(f"✅ Todos os complexos e ligantes em SDF foram salvos para exportação ZIP.")
 
             with col_vis2:
                 if st.session_state.get('complex_generated', False):
+                    # Botão para baixar o SDF do fármaco sozinho e manter ligações duplas
+                    with open(st.session_state.sdf_ligand_generated, "r") as f:
+                        st.download_button("📥 Baixar Fármaco Isolado (.SDF) para Discovery Studio", data=f.read(), file_name=st.session_state.sdf_ligand_generated, mime="chemical/x-mdl-sdfile", type="primary")
+                    
                     viewer_comp = py3Dmol.view(width=700, height=450)
                     viewer_comp.addModel(st.session_state.rec_str, "pdb")
                     viewer_comp.setStyle({'model': 0}, {"cartoon": {'color': 'spectrum'}})
@@ -950,10 +965,11 @@ with tab_visualizar:
             # --- EXPORTAÇÃO COMPLETA DA TRIAGEM EM LOTE ---
             st.divider()
             st.markdown("### 📦 Exportação Completa de Dados (Download)")
-            st.info("Faça o download de um pacote ZIP contendo os arquivos de configuração, logs, e as pastas com as posições originais (.pdbqt) e os complexos 3D fundidos (.pdb).")
+            st.info("O pacote ZIP agora incluirá a pasta extra `_LigantesSDF`, essencial para mapear conexões duplas e aromáticas em ferramentas como o Discovery Studio Visualizer.")
             
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                # Adiciona poses PDBQT
                 if os.path.exists(st.session_state.vs_results_dir):
                     for root, dirs, files in os.walk(st.session_state.vs_results_dir):
                         for file in files:
@@ -961,12 +977,22 @@ with tab_visualizar:
                             arcname = os.path.join(st.session_state.vs_results_dir, os.path.relpath(file_path, st.session_state.vs_results_dir))
                             zip_file.write(file_path, arcname)
                 
+                # Adiciona complexos PDB
                 out_complexes_dir = f"{st.session_state.vs_results_dir}_ComplexosPDB"
                 if os.path.exists(out_complexes_dir):
                     for root, dirs, files in os.walk(out_complexes_dir):
                         for file in files:
                             file_path = os.path.join(root, file)
                             arcname = os.path.join(out_complexes_dir, os.path.relpath(file_path, out_complexes_dir))
+                            zip_file.write(file_path, arcname)
+                            
+                # Adiciona farmacos SDF (Nova Correção das Ligações Duplas)
+                out_sdf_dir = f"{st.session_state.vs_results_dir}_LigantesSDF"
+                if os.path.exists(out_sdf_dir):
+                    for root, dirs, files in os.walk(out_sdf_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.join(out_sdf_dir, os.path.relpath(file_path, out_sdf_dir))
                             zip_file.write(file_path, arcname)
                             
                 if os.path.exists("config.txt"):
@@ -1016,7 +1042,7 @@ with tab_visualizar:
             col_vis1, col_vis2 = st.columns([1, 2])
             
             with col_vis1:
-                st.markdown("**Síntese de PDB Interativo**")
+                st.markdown("**Síntese de PDB Interativo e SDF**")
                 rep_escolhida = st.selectbox("Escolha a Replicata para sintetizar o complexo:", ["rep1", "rep2", "rep3"])
                 
                 if st.button("Sintetizar Complexo PDB"):
@@ -1031,10 +1057,13 @@ with tab_visualizar:
                                     if in_model_1: best_pose_lines.append(linha)
                                     if linha.startswith("ENDMDL") and in_model_1: break
                             with open("melhor_pose.pdbqt", "w") as f: f.writelines(best_pose_lines)
+                            
+                            # Convertendo para PDB (Visualização) e SDF (Ligações Duplas)
                             subprocess.run(["obabel", "-ipdbqt", "melhor_pose.pdbqt", "-opdb", "-O", "melhor_pose.pdb"])
+                            subprocess.run(["obabel", "-ipdbqt", "melhor_pose.pdbqt", "-osdf", "-O", "melhor_pose.sdf"])
                             
                             with open(st.session_state.rec_pdb_final, 'r') as f: rec_lines = [l for l in f.readlines() if not l.startswith("END")]
-                            if os.path.exists("melhor_pose.pdb"):
+                            if os.path.exists("melhor_pose.pdb") and os.path.exists("melhor_pose.sdf"):
                                 lig_lines = []
                                 with open("melhor_pose.pdb", 'r') as f:
                                     for l in f.readlines():
@@ -1043,21 +1072,30 @@ with tab_visualizar:
                                             
                                 complex_str = "".join(rec_lines + lig_lines + ["END\n"])
                                 complexo_out = f"complexo_{os.path.basename(base_name)}_{rep_escolhida}.pdb"
+                                sdf_out = f"ligante_{os.path.basename(base_name)}_{rep_escolhida}.sdf"
+                                
                                 with open(complexo_out, "w") as f: f.write(complex_str)
+                                os.rename("melhor_pose.sdf", sdf_out)
+                                
                                 st.session_state.complex_generated = True
                                 st.session_state.complex_file = complexo_out
+                                st.session_state.sdf_ligand_generated = sdf_out
                                 st.session_state.rec_str = "".join(rec_lines)
                                 st.session_state.lig_str = "".join(lig_lines)
-                                st.success("Modelo Holo consolidado com nomenclatura farmacofórica padrão (HETATM/UNL)!")
+                                st.success("Modelo consolidado. SDF gerado com sucesso!")
                     else:
                         st.error("Arquivos bases não encontrados.")
             
                 if st.session_state.get('complex_generated', False):
                     with open(st.session_state.complex_file, "r") as f:
-                        st.download_button("⬇️ Baixar PDB do Complexo Interativo", data=f.read(), file_name=st.session_state.complex_file, mime="text/plain", type="primary")
+                        st.download_button("⬇️ Baixar PDB do Complexo Interativo", data=f.read(), file_name=st.session_state.complex_file, mime="text/plain")
 
             with col_vis2:
                 if st.session_state.get('complex_generated', False):
+                    # Novo botão para download do SDF do fármaco isolado
+                    with open(st.session_state.sdf_ligand_generated, "r") as f:
+                        st.download_button("📥 Baixar Fármaco Isolado (.SDF) para Discovery Studio", data=f.read(), file_name=st.session_state.sdf_ligand_generated, mime="chemical/x-mdl-sdfile", type="primary")
+                        
                     viewer_comp = py3Dmol.view(width=700, height=450)
                     viewer_comp.addModel(st.session_state.rec_str, "pdb")
                     viewer_comp.setStyle({'model': 0}, {"cartoon": {'color': 'spectrum'}})
@@ -1121,7 +1159,7 @@ with tab_visualizar:
     2. **LigPlot+** (EMBL-EBI)
     3. **Schrödinger Maestro** (Academic Version)
     
-    **Como utilizar:** Basta baixar os arquivos **PDB do Complexo Interativo** gerados nesta aba e abri-los diretamente em qualquer um destes softwares. Eles identificarão automaticamente a proteína e o fármaco (HETATM) para desenhar o diagrama.
+    **Como utilizar:** Para garantir as interações corretas com as ligações duplas do fármaco preservadas, abra a proteína em `.pdb` e o ligante isolado (que agora você pode baixar em **`.sdf`**) simultaneamente nesses softwares.
     """)
 
 # ==========================================
