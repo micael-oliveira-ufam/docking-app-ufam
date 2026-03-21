@@ -100,14 +100,17 @@ def get_vina_affinity(file_path):
 st.set_page_config(page_title="Docking Molecular - FCF/UFAM", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# BARRA LATERAL (AUTORIA E LOGO)
+# BARRA LATERAL (AUTORIA E LOGO VIA LINK)
 # ==========================================
 with st.sidebar:
+    # URL da logo fornecida
+    UFAM_LOGO_URL = "https://digital.ufam.edu.br/assets/img/ufam_logo.png"
+    
     try:
-        # Caminho e nome do arquivo atualizados conforme solicitado
-        st.image("logo_ufam.jpg", use_container_width=True)
+        # Carregando a logo diretamente do link
+        st.image(UFAM_LOGO_URL, use_container_width=True)
     except Exception:
-        st.warning("Logo da UFAM ('logo_ufam.jpg') não encontrada no diretório raiz.")
+        st.warning(f"Não foi possível carregar a logo do link: {UFAM_LOGO_URL}")
     
     st.markdown("---")
     st.markdown("### Autoria do Projeto")
