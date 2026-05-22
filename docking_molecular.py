@@ -92,7 +92,7 @@ def kill_all_processes():
     return count
 
 # ==========================================
-# FUNÇÕES AUXILIARES COM TRATEMENTO DE ERRO
+# FUNÇÕES AUXILIARES COM TRATAMENTO DE ERRO
 # ==========================================
 def get_ligands_from_pdb(pdb_file):
     ligands = set()
@@ -115,8 +115,7 @@ def extract_ligand_from_pdb(pdb_file, res_name, output_file):
             for line in f_in:
                 if line.startswith("HETATM") and line[17:20].strip() == res_name:
                     f_out.write(line)
-            f_out.write("END
-")
+            f_out.write("END\n")
     except Exception as e:
         st.error(f"Erro ao extrair ligante: {e}")
 
@@ -404,8 +403,7 @@ with tab_ligante:
                     os.makedirs("Ligantes", exist_ok=True)
                     for f in glob.glob("Ligantes/*.pdbqt"): os.remove(f) 
                     
-                    linhas = [l for l in texto_smiles.split('
-') if l.strip()]
+                    linhas = [l for l in texto_smiles.split('\n') if l.strip()]
                     total_sucesso, total_falha = 0, 0
                     my_bar = st.progress(0)
                     
